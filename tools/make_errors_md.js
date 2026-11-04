@@ -18,6 +18,7 @@ const sections = [
   ['E41', 'E54', 'F. JES2 の起動'],
   ['E55', 'E60', 'G. 稼働中の操作エラー'],
   ['E61', 'E84', 'H. 停止（シャットダウン）'],
+  ['L01', 'L99', 'J. jcl-terminal との連携（2つのタブをつないだとき）'],
   ['N01', 'N02', 'I. 正常系（基準）'],
 ];
 const idOf = s => { const m = /^(\$HASP\d{3,4}|[A-Z]{3,4}\d{3,4}[A-Z])/.exec(s); return m ? m[1] : null; };
@@ -36,7 +37,7 @@ for (const [a, b, title] of sections) {
     n++;
     const ids = [...new Set((c.expect || []).map(idOf).filter(Boolean))];
     const waits = [...new Set((c.expect || []).map(waitOf).filter(Boolean))];
-    const refs = ids.filter(i => Ref.MSG[i]).slice(0, 3).map(i => `${i}: ${Ref.MSG[i][0].replace(/ S[AC]\d{2}-\d{4}-\d{2}$/, '')} p.${Ref.MSG[i][1]}`)
+    const refs = ids.filter(i => Ref.MSG[i]).slice(0, 3).map(i => `${i}: ${Ref.MSG[i][0].replace(/ S[AC]\d{2}-\d{4}-\d{2}$/, '')}${Ref.MSG[i][1] ? ' p.' + Ref.MSG[i][1] : ''}`)
       .concat(waits.filter(w => Ref.WAIT[w]).map(w => `待機 ${w}: System Codes p.${Ref.WAIT[w][1]}`));
     const exp = (c.expect || []).map(e => '`' + e.replace(/\|/g, '/') + '`').join(' → ');
     L.push(`| ${c.id} | ${c.title.replace(/\|/g, '/')} | ${(c.scenarios || []).map(scLabel).join('<br>') || '—'} | ${exp} | ${refs.join('<br>') || '（シミュレータ注記）'} |`);

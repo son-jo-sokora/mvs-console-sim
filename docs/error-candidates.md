@@ -6,7 +6,7 @@ JES2 の初期化・終了モジュールが出す応答要求／終了メッセ
 機械抽出のため、一部に情報メッセージ（エラーでないもの）も混じります。
 
 凡例: ✓＝シミュレータで再現（tests でテスト）、△＝解説のみ（シミュレータ内の注記・解説パネル）、空欄＝未対応
-**合計 387 件**（うちシミュレータで再現 50 件）。シミュレータで扱うエラーの詳細とテスト対応は [error-catalog.md](error-catalog.md) を参照。
+**合計 387 件**（うちシミュレータで再現 51 件）。シミュレータで扱うエラーの詳細とテスト対応は [error-catalog.md](error-catalog.md) を参照。
 
 
 ## A. IPL / NIP（IEA メッセージ、Vol 6）（116 件）
@@ -192,7 +192,7 @@ JES2 の初期化・終了モジュールが出す応答要求／終了メッセ
 | ✓ | `$HASP400` | ENTER REQUESTS JES2 is ready for job processing and is waiting for requests. This mode pro | JES2 Messages SA32-0989-70 p.313 |
 |  | `$HASP401` | EXTENT ERROR ON volser | JES2 Messages SA32-0989-70 p.313 |
 |  | `$HASP403` | DO YOU WISH TO IGNORE THE CHANGE LOG UPDATES? | JES2 Messages SA32-0989-70 p.315 |
-|  | `$HASP406` | jobname WAS EXECUTING ON MEMBER | JES2 Messages SA32-0989-70 p.316 |
+| ✓ | `$HASP406` | jobname WAS EXECUTING ON MEMBER | JES2 Messages SA32-0989-70 p.316 |
 |  | `$HASP407` | jobname WAS TERMINATING ON MEMBER | JES2 Messages SA32-0989-70 p.317 |
 |  | `$HASP408` | jobname IS QUEUED FOR RE-EXECUTION | JES2 Messages SA32-0989-70 p.317 |
 |  | `$HASP411` | MORE THAN nnn | JES2 Messages SA32-0989-70 p.319 |
@@ -333,7 +333,7 @@ JES2 の初期化・終了モジュールが出す応答要求／終了メッセ
 | ✓ | `IEE842I` | jobname DUPLICATE NAME FOUND - REENTER COMMAND WITH 'A=' KEYWORD | Vol7 SA38-0674-70 p.1272 |
 |  | `IEFC008I` | PEND STATEMENT FOUND BEFORE END OF PROCEDURE The system found a PEND statement before reac | Vol8 SA38-0675-70 p.508 |
 |  | `IEFC022I` | UNEXPECTED END OF PROCEDURE The system found the end of a procedure when it expected more  | Vol8 SA38-0675-70 p.517 |
-|  | `IEFC452I` | text - JOB NOT RUN - JCL ERROR 520 z/OS: z/OS MVS System Messages, Vol 8 (IEF-IGD) | Vol8 SA38-0675-70 p.532 |
+| △ | `IEFC452I` | text - JOB NOT RUN - JCL ERROR 520 z/OS: z/OS MVS System Messages, Vol 8 (IEF-IGD) | Vol8 SA38-0675-70 p.532 |
 |  | `IEFC610I` | PROCEDURE HAS NO STEP The system did not find an EXEC statement in a procedure. | Vol8 SA38-0675-70 p.537 |
 |  | `IEFC611I` | OVERRIDDEN STEP NOT FOUND IN PROCEDURE The system did not find a step name specified by an | Vol8 SA38-0675-70 p.538 |
 | ✓ | `IEFC612I` | PROCEDURE [procname] WAS NOT FOUND The system could not find a procedure in the input stre | Vol8 SA38-0675-70 p.539 |

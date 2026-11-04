@@ -9,6 +9,7 @@ const { results, coverage } = runAll({
   Ref: require(path.join(root, 'msgref.js')),
   Procs: require(path.join(root, 'procedures.js')),
   cases: require('./cases.js'),
+  Mock: require(path.join(root, 'link-mock.js')),
   Ex: require(path.join(root, 'scenarios.js')),
   exCases: require('./exercise-cases.js'),
   engineSrc: fs.readFileSync(path.join(root, 'engine.js'), 'utf8'),

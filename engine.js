@@ -64,6 +64,11 @@
       this.events = [];       // 操作履歴（採点用）
       this.triggers = (opts.triggers || []).map(t => Object.assign({}, t, { fired: false }));
       this.initialJobs = opts.jobs || null; // 演習シナリオで、最初の JES2 起動時にスプールにあるジョブ
+      // jcl-terminal との連携（setLink で送信先を設定。届いたメッセージは linkIn）
+      this.spool = [];        // 連携ジョブ（jcl-terminal で投入）。IPL をまたいで残る: {jobid,name,cls,held,dsns,asks,state,wasExec}
+      this.linkOut = null;
+      this.termPresent = false;
+      this.linkDur = opts.linkDurations || {}; // ジョブ名 → 実行にかかる分（既定 0 ＝すぐ終わる）
       this.clock = new Date(Date.UTC(2026, 10, 5, 6, 0, 0)); // 2026-11-05 06:00
       this._resetMachine();
       // 前回の運転状態（シナリオで変わる）
@@ -136,14 +141,20 @@
     wtor(msgid, text, fn, opts) {
       opts = opts || {};
       const id = this.phase === 'NIP' ? '00' : pad(this.nextReply++ % 100, 2);
-      this.replies.set(id, { msgid, text, fn });
+      this.replies.set(id, { msgid, text, fn, jobid: opts.jobid });
       this.emit('*' + id + ' ' + (msgid.startsWith('$') ? msgid + ' ' : msgid + ' ') + text, 'wtor', msgid);
       return id;
     }
     pending() { return [...this.replies.entries()].map(([id, r]) => ({ id, msgid: r.msgid, text: r.text })); }
 
     // ---- HMC 操作 -----------------------------------------------------
-    hmcLoad(addr, loadparm) {
+    // 公開の操作は、終わったら連携相手に状態を知らせる
+    hmcLoad(addr, lp) { const r = this._hmcLoad(addr, lp); this._afterOp(); return r; }
+    hmcReset() { const r = this._hmcReset(); this._afterOp(); return r; }
+    command(raw) { const r = this._command(raw); this._afterOp(); return r; }
+    advance(min) { const r = this._advance(min); this._afterOp(); return r; }
+
+    _hmcLoad(addr, loadparm) {
       addr = (addr || '').trim().toUpperCase();
       loadparm = (loadparm || '').toUpperCase();
       this._log('load', addr + '/' + loadparm);
@@ -192,12 +203,15 @@
       return true;
     }
 
-    hmcReset() {
+    _hmcReset() {
       this._log('reset', this.phase);
       const was = this.phase;
       if (was === 'UP' && !this.eod) this._log('reset-without-shutdown');
       // JES2 が動いたままリセットすると、次回チェックポイントのロックが残る（$HASP479 MEMBER=SYSA）
       const jesActive = (was === 'UP' || was === 'PARTITIONED') && ['INIT', 'HOLD', 'UP'].includes(this.jes);
+      // 実行中だった連携ジョブはスプールに残り、次の JES2 ウォームスタートで再実行待ちになる（$HASP406）
+      for (const sj of this.spool) if (sj.state === 'EXEC') { sj.state = 'INPUT'; sj.wasExec = true; }
+      if (this.jobs.some(j => j.type === 'TSU' && j.linked)) this._send({ t: 'logoff', how: 'RESET' });
       this.hmc('HMC: システムリセット（クリア）を実行しました');
       this._resetMachine();
       if (jesActive) this.ckptLockHeld = true;
@@ -458,7 +472,7 @@
     }
 
     // ---- コンソール入力 ---------------------------------------------------
-    command(raw) {
+    _command(raw) {
       const text = (raw || '').trim();
       if (this.phase === 'OFF') { this.note('（シミュレータ注記）システムは起動していません。HMC から LOAD してください'); return; }
       if (this.phase === 'WAIT' || this.phase === 'PARTITIONED') { this.note('（シミュレータ注記）システムは無効待機状態です。コマンドは受け付けられません。HMC からシステムリセット／再 LOAD してください'); return; }
@@ -497,11 +511,17 @@
       this._log('invalid-cmd', verb);
     }
 
-    advance(min) {
+    _advance(min) {
       for (let i = 0; i < min; i++) {
         this.tick(60);
         for (const j of this.jobs.slice()) {
-          if (j.type === 'JOB' && j.remain !== Infinity) { j.remain--; if (j.remain <= 0) this._endJob(j, 'RC=0000'); }
+          if (j.type !== 'JOB' || j.enqWait || j.remain === Infinity) continue;
+          if (j.linked) {
+            // 連携ジョブ: 時間が来たら jcl-terminal に実行させ、結果（result）を待つ
+            if (!j.linked.asks && !j.runSent) { j.remain--; if (j.remain <= 0) { j.runSent = true; this._send({ t: 'run', id: j.jobid }); } }
+            continue;
+          }
+          j.remain--; if (j.remain <= 0) this._endJob(j, 'RC=0000');
         }
         if (this.jes === 'UP') this._initiate();
       }
@@ -536,20 +556,54 @@
       const j = { name, type, asid: this.nextAsid++, jobid: (type === 'JOB' ? 'JOB' : type === 'STC' ? 'STC' : 'TSU') + pad(this.nextJobid++, 5), remain, cancelable: cancelable !== false };
       this.jobs.push(j); return j;
     }
-    _endJob(j, how) {
+    // silent: 終了メッセージ（$HASP395 など）は連携相手から届いた行で表示済み
+    _endJob(j, how, silent) {
       this.jobs = this.jobs.filter(x => x !== j);
-      this.emit('$HASP395 ' + j.name.padEnd(8) + ' ENDED - ' + how);
+      if (!silent) this.emit('$HASP395 ' + j.name.padEnd(8) + ' ENDED - ' + how);
       this._log('job-end', j.name + ' ' + how);
+      if (j.linked && j.type === 'JOB') j.linked.state = 'DONE';
+      if (j.type === 'TSU' && j.linked) { this._send({ t: 'logoff', how }); this.note('（連携）USER01（jcl-terminal）の TSO セッションが終了しました'); }
       if (this.jes === 'UP' && this.jesDrain && !this.jobs.some(x => x.type === 'JOB')) this.emit('$HASP099 ALL AVAILABLE FUNCTIONS COMPLETE');
       if (j.name === 'TSO' && this.vtam === 'HALTING') this._vtamDown();
+      // データセット待ちのジョブは、使えるようになったら先へ進む（IEF099I の説明どおり）
+      for (const w of this.jobs.filter(x => x.enqWait)) if (!this._enqConflicts(w).length) { this._log('enq-free', w.name); this._proceed(w); }
     }
     _initiate() {
       if (!this.inits || this.jesDrain || this.jes !== 'UP') return;
-      if (!this._batchQueued) return;
-      for (const q of this._batchQueued.splice(0)) {
-        const j = this._addJob(q.name, 'JOB', q.remain, q.cancelable);
-        this.emit('$HASP373 ' + j.name.padEnd(8) + ' STARTED - INIT 1    - CLASS A        - SYS ' + SYSNAME);
+      for (const q of (this._batchQueued || []).splice(0)) this._startJob(q, null);
+      for (const sj of this.spool) if (sj.state === 'INPUT' && !sj.held) this._startJob(sj, sj);
+    }
+    _startJob(q, linked) {
+      const j = this._addJob(q.name, 'JOB', linked ? (this.linkDur[q.name] || 0) : q.remain, q.cancelable);
+      j.dsns = q.dsns || [];
+      if (linked) { j.linked = linked; j.jobid = linked.jobid; linked.state = 'EXEC'; }
+      this.emit('$HASP373 ' + j.name.padEnd(8) + ' STARTED - INIT 1    - CLASS ' + (q.cls || 'A') + '        - SYS ' + SYSNAME);
+      const busy = this._enqConflicts(j);
+      if (busy.length) {
+        // 他のジョブが使用中のデータセットがある → 確保できるまで待つ（Vol 8 IEF861I / IEF863I / IEF099I）
+        j.enqWait = true;
+        this.emit('IEF861I FOLLOWING RESERVED DATA SET NAMES UNAVAILABLE TO ' + j.name, 'action');
+        busy.forEach(d => this.emit('IEF863I DSN=' + d + ' ' + j.name + ' RC=00000004 RSN=00000000 FROM SERVICE ENQ', 'action'));
+        this.emit('IEF099I JOB ' + j.name + ' WAITING FOR DATA SETS', 'action');
+        this._log('enq-wait', j.name + ' ' + busy.join(','));
+        return;
       }
+      this._proceed(j);
+    }
+    _proceed(j) {
+      j.enqWait = false;
+      if (!j.linked) return;
+      this._send({ t: 'start', id: j.jobid });
+      if (!j.linked.asks && j.remain <= 0) { j.runSent = true; this._send({ t: 'run', id: j.jobid }); }
+    }
+    // j が使いたいデータセットのうち、他の実行中ジョブが使っていて共用できないもの
+    _enqConflicts(j) {
+      const out = [];
+      for (const d of j.dsns || []) {
+        const held = this.jobs.some(x => x !== j && !x.enqWait && (x.dsns || []).some(e => e.dsn === d.dsn && (e.excl || d.excl)));
+        if (held && !out.includes(d.dsn)) out.push(d.dsn);
+      }
+      return out;
     }
     _start(name, parm) {
       const known = { JES2: 1, VTAM: 1, NET: 1, TCPIP: 1, TSO: 1 };
@@ -630,6 +684,7 @@
         this.emit('IEE301I ' + name + ' FORCE' + (arm ? ' ARM' : '') + ' COMMAND ACCEPTED');
         this._log('force', name);
         this.emit('IEF450I ' + name + ' STEP1 - ABEND=S122 U0000 REASON=00000000');
+        if (j.linked && j.type === 'JOB') this._linkCancel(j, 'S122');
         return this._endJob(j, 'ABEND=S122');
       }
       if (j.cancelable === false) { this.emit('IEE841I ' + name + ' NON-CANCELABLE', 'error'); this._log('cancel-noncancelable', name); return; }
@@ -637,8 +692,15 @@
       this._log('cancel', name);
       j.cancelTried = true;
       if (j.name === 'VTAM') { this.vtam = 'DOWN'; this.emit('IST102I VTAM IS NOW INACTIVE'); }
+      if (j.type === 'TSU') { this._endJob(j, 'ABEND=S222'); return; }
       this.emit('IEF450I ' + name + ' ' + (j.type === 'STC' ? name : 'STEP1') + ' - ABEND=S222 U0000 REASON=00000000');
+      if (j.linked && j.type === 'JOB') this._linkCancel(j, 'S222');
       this._endJob(j, 'ABEND=S222');
+    }
+    _linkCancel(j, code) {
+      this._send({ t: 'cancel', id: j.jobid, code });
+      // そのジョブの問い合わせ（WTOR）が残っていれば消す
+      for (const [id, r] of [...this.replies]) if (r.jobid === j.jobid) this.replies.delete(id);
     }
 
     // ---- JES2 ----------------------------------------------------------
@@ -712,6 +774,17 @@
     }
     _jesComplete(mode) {
       this.emit('$HASP478 INITIAL CHECKPOINT READ IS FROM CKPT1 (SYS1.JES2.CKPT1 ON SPOOL1)');
+      // 連携ジョブ: コールドスタートならスプールごと消え、ウォームスタートなら実行中だったジョブを再実行待ちに戻す
+      if (mode === 'COLD') {
+        if (this.spool.some(s => s.state !== 'DONE')) this.note('（連携）コールドスタートのため、jcl-terminal から投入されたジョブと出力もすべて失われました');
+        this.spool = []; this._send({ t: 'cold' });
+      } else {
+        for (const sj of this.spool) if (sj.wasExec) {
+          delete sj.wasExec;
+          this.emit('$HASP406 ' + sj.name.padEnd(8) + ' WAS EXECUTING ON MEMBER ' + SYSNAME);
+          this._send({ t: 'requeue', id: sj.jobid }); this._log('requeue', sj.name);
+        }
+      }
       this.emit('$HASP493 JES2 ' + (mode === 'COLD' ? 'COLD START' : 'ALL-MEMBER WARM START') + ' IS IN PROGRESS');
       this.emit('$HASP492 JES2 ' + (mode === 'COLD' ? 'COLD START' : 'ALL-MEMBER WARM START') + ' HAS COMPLETED');
       this.jesMode = mode;
@@ -755,10 +828,131 @@
         return;
       }
       if (c === '$DU' || c === '$DJES2') return this._hasp608(c === '$DJES2');
+      const jm = /^\$([DHAC])J(?:'([A-Z0-9@#$*]{1,8})'|(?:OB)?0*(\d{1,5}))$/.exec(c);
+      if (jm) return this._jobCmd(jm[1], jm[2], jm[3], up);
       if (/^\$PJES2/.test(c)) return this._pjes2(c.slice(6));
       this.emit('$HASP003 RC=(01),' + up.split(/[\s,]/)[0] + ' - INVALID COMMAND（シミュレータ表示）', 'error');
       this._log('jes-cmd-bad', up);
     }
+    // $DJ / $HJ / $AJ / $CJ（ジョブ名 'name' または番号で指定）。表示の書式は JES2 Messages $HASP890
+    _jobCmd(act, name, num, up) {
+      const rx = name ? new RegExp('^' + name.replace(/\*/g, '.*') + '$') : null;
+      const hit = x => rx ? rx.test(x.name) : +String(x.jobid).replace(/\D/g, '') === +num;
+      const running = this.jobs.filter(j => j.type === 'JOB' && hit(j));
+      const queued = this.spool.filter(s => s.state === 'INPUT' && hit(s));
+      const verb = up.replace(/\s+/g, '');
+      if (!running.length && !queued.length) { this._log('jes-job-none', act + ' ' + (name || num)); this.emit('$HASP003 RC=(52),' + verb.slice(1) + ' - NO SELECTABLE ENTRIES FOUND MATCHING SPECIFICATION', 'error'); return; }
+      this._log('jes-job', act + ' ' + (name || num));
+      const show = (x, exec) => {
+        const st = exec ? 'EXECUTING ' + SYSNAME : 'AWAITING EXECUTION';
+        this.emit('$HASP890 JOB(' + x.name + ')' + ' '.repeat(Math.max(1, 10 - x.name.length)) + 'STATUS=(' + st + '),CLASS=' + (x.cls || 'A') + ',\n$HASP890' + ' '.repeat(16) + 'PRIORITY=9,SYSAFF=(ANY),HOLD=(' + (!exec && x.held ? 'JOB' : 'NONE') + ')');
+      };
+      for (const s of queued) {
+        if (act === 'H' && !s.held) { s.held = true; this._send({ t: 'job', id: s.jobid, status: 'HELD' }); }
+        if (act === 'A' && s.held) { s.held = false; this._send({ t: 'job', id: s.jobid, status: 'RELEASED' }); }
+        if (act === 'C') { s.state = 'DONE'; s.maxcc = 'CANCELED'; this._send({ t: 'job', id: s.jobid, status: 'CANCELED' }); this.note('（シミュレータ）' + s.name + ' は実行前に取り消されました'); continue; }
+        show(s, false);
+      }
+      for (const j of running) {
+        if (act === 'C') {
+          this.emit('IEF450I ' + j.name + ' STEP1 - ABEND=S222 U0000 REASON=00000000');
+          if (j.linked) this._linkCancel(j, 'S222');
+          this._log('cancel', j.name);
+          this._endJob(j, 'ABEND=S222');
+          continue;
+        }
+        show(j, true);
+      }
+      if (act === 'A') this._initiate();
+    }
+
+    // ---- jcl-terminal との連携 ------------------------------------------
+    // 送信先を設定する（ブラウザでは BroadcastChannel、テストでは模擬の jcl-terminal）
+    setLink(fn) { this.linkOut = fn; this._lastState = null; this._send({ t: 'hello' }); this._afterOp(); }
+    linkIn(m) { const r = this._linkIn(m || {}); this._afterOp(); return r; }
+    linkHeartbeat() { this._lastState = null; this._sync(); }   // 相手が後から開いても状態が伝わるよう、定期的に送り直す
+    _send(m) { if (this.linkOut) { try { this.linkOut(m); } catch (e) { /* 相手がいなくても動作は続ける */ } } }
+    _sync() {
+      const tsu = this.jobs.find(j => j.type === 'TSU' && j.linked);
+      const s = { t: 'state', sys: SYSNAME, phase: this.phase, jes: this.jes, drain: this.jesDrain,
+        tso: this.phase === 'UP' && this.jobs.some(j => j.name === 'TSO'), logon: this.phase === 'UP' && !!tsu, tsu: tsu ? tsu.jobid : null };
+      const k = JSON.stringify(s);
+      if (k !== this._lastState) { this._lastState = k; this._send(s); }
+    }
+    _afterOp() {
+      if (!this.linkOut) return;
+      // jcl-terminal が開いていて TSO が動いていれば、USER01 がログオンしている
+      const tso = this.phase === 'UP' && this.jobs.some(j => j.name === 'TSO');
+      let u = this.jobs.find(j => j.type === 'TSU' && j.linked);
+      if (this.termPresent && tso && !u) {
+        u = this.jobs.find(j => j.type === 'TSU' && j.name === 'USER01') || this._addJob('USER01', 'TSU', Infinity, true);
+        u.linked = true;
+        this.note('（連携）USER01（jcl-terminal）が TSO にログオンしました');
+        this._log('link-logon');
+      }
+      this._sync();
+    }
+    _linkIn(m) {
+      const p8 = s => String(s).padEnd(8).slice(0, Math.max(8, String(s).length));
+      switch (m.t) {
+        case 'hello': {
+          this.termPresent = true;
+          // jcl-terminal 側に残っている（まだ終わっていない）連携ジョブを、スプールにあるものとして受け取る
+          for (const p of m.pending || []) if (!this.spool.some(s => s.jobid === p.id)) {
+            this.spool.push({ jobid: p.id, name: p.name, cls: p.cls || 'A', held: !!p.held, dsns: p.dsns || [], asks: !!p.asks, state: 'INPUT' });
+            if (p.queue === 'EXECUTION') this._send({ t: 'requeue', id: p.id });
+          }
+          this._lastState = null;
+          this._send({ t: 'hello-ack' });
+          this._initiate();
+          return;
+        }
+        case 'ping': this.termPresent = true; return;
+        case 'bye': {
+          this.termPresent = false;
+          const u = this.jobs.find(j => j.type === 'TSU' && j.linked);
+          if (u) { this.jobs = this.jobs.filter(x => x !== u); this.note('（連携）USER01（jcl-terminal）が閉じられ、TSO からログオフしました'); }
+          return;
+        }
+        case 'submit': {
+          const tsu = this.jobs.find(j => j.type === 'TSU' && j.linked);
+          this.emit('$HASP100 ' + p8(m.name) + ' ON INTRDR' + ' '.repeat(12) + String(m.pgmr || '').padEnd(20) + ' FROM ' + (tsu ? tsu.jobid : 'TSU00000') + ' USER01');
+          this._log('link-submit', m.name + (m.held ? ' HELD' : ''));
+          const sj = { jobid: m.id, name: m.name, cls: m.cls || 'A', held: !!m.held, dsns: m.dsns || [], asks: !!m.asks, state: 'INPUT' };
+          this.spool.push(sj);
+          if (m.done) {
+            // JCL エラーや TYPRUN=SCAN は実行されずに終わる（結果の行は jcl-terminal から届く）
+            sj.state = 'DONE'; sj.maxcc = m.maxcc;
+            (m.lines || []).forEach(l => this.emit(l, /JCL ERROR/.test(l) ? 'error' : 'info'));
+            this._log('link-result', m.name + ' ' + (m.maxcc || ''));
+            return;
+          }
+          this._initiate();
+          return;
+        }
+        case 'cmd': this._command(m.text); return;           // SDSF の行コマンド（$HJ / $AJ / $CJ）
+        case 'wtor': {
+          const job = this.jobs.find(j => j.jobid === m.id);
+          const mm = /^(\S+)\s+([\s\S]*)$/.exec(m.text || '');
+          if (!job || !mm) return;
+          this.wtor(mm[1], mm[2], r => { this._send({ t: 'reply', id: m.id, ask: m.ask, text: r }); this._log('link-reply', job.name + ' ' + r.trim().toUpperCase()); return true; }, { jobid: m.id });
+          return;
+        }
+        case 'msg': this.emit(m.text); return;
+        case 'result': {
+          const j = this.jobs.find(x => x.jobid === m.id && x.linked);
+          if (!j) return;                                     // 取り消し済み
+          (m.lines || []).forEach(l => this.emit(l, /ABEND|JCL ERROR/.test(l) ? 'error' : 'info'));
+          j.linked.maxcc = m.maxcc;
+          this._log('link-result', j.name + ' ' + (m.maxcc || ''));
+          this._endJob(j, m.maxcc || '', true);
+          return;
+        }
+      }
+    }
+    // 連携ジョブの結果（採点用）: ジョブ名 → 最後の maxcc
+    linkResult(name) { const s = this.spool.filter(x => x.name === name).pop(); return s ? (s.maxcc || s.state) : null; }
+
     _activity() {
       const as = this.jobs.filter(j => j.type !== 'TSU' || true);
       return as;

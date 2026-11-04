@@ -261,13 +261,129 @@
     },
   ];
 
+  // ======================= 連携演習（jcl-terminal と一緒に使う） =======================
+  const SALESUPD = { name: 'SALESUPD', remain: 600, dsns: [{ dsn: 'USER01.SALES.DATA', excl: true }] };
+  const SHUT = ['P TSO', 'R #IKT010D#,SIC', 'P TCPIP', 'Z NET', '$P', '$PJES2', 'Z EOD'].map(c => ({ op: 'CMD', in: c }));
+  X.push(
+    {
+      id: 'XL1', link: true, title: '立ち上げ後に、利用者の確認ジョブで業務開始を判断する',
+      level: '初級', time: '10分',
+      story: '朝の立ち上げです。この職場の手順では、業務開始を宣言する前に、利用者（USER01）に確認用のジョブ HELLO を流してもらい、正常に終わったことをコンソールで確かめます。利用者役は jcl-terminal のタブで行います。',
+      handoff: ['利用者 USER01: TSO に入れるようになったら、すぐ HELLO を流します。', 'シフトリーダー: HELLO が RC=0000 で終わるのを確認してから業務開始を連絡すること。'],
+      order: ['ロードアドレス 0A80、ロードパラメーター 0A8200M1 で IPL する。', 'JES2 をウォームスタートし、VTAM・TCP/IP・TSO を起動する。', '（利用者役）jcl-terminal のタブで HELLO を SUB する。', 'コンソールで HELLO の終了（$HASP395 … RC=0000）を確認し、D A,L で全体を確認する。'],
+      goal: 'HELLO が CC 0000 で終わり、JES2・VTAM・TCP/IP・TSO が動いていること。',
+      checks: [
+        { item: 'TSO にログオンしてから HELLO を投入した', fn: (s, ev) => idx(ev, 'link-logon') >= 0 && idx(ev, 'link-submit', 'HELLO') > idx(ev, 'link-logon') },
+        { item: 'HELLO が CC 0000 で終わった', fn: s => s.linkResult('HELLO') === 'CC 0000' },
+        { item: '業務開始状態（JES2・VTAM・TCP/IP・TSO が稼働）', fn: s => allUp(s) },
+      ],
+      solution: [
+        { op: 'LOAD', addr: '0A80', lp: '0A8200M1' },
+        { op: 'CMD', in: 'R #$HASP426#,WARM' },
+        { op: 'CMD', in: '$S', say: '$S を忘れると、HELLO は投入されても始まらない（$HASP400 のまま）。' },
+        { op: 'CMD', in: 'S VTAM' }, { op: 'CMD', in: 'S TCPIP' },
+        { op: 'CMD', in: 'S TSO', say: 'TSO が動くと、jcl-terminal の USER01 がログオンする。' },
+        { op: 'TERM', sub: 'HELLO', say: '（利用者役）jcl-terminal で HELLO を SUB。コンソールに $HASP100 → $HASP373 → $HASP395 が出る。' },
+        { op: 'CMD', in: 'D A,L', say: '全体を確認して業務開始を連絡。' },
+      ],
+      points: ['利用者のジョブはオペレーター側の JES2 で実行される。$S やイニシエーターの状態しだいで、投入されても始まらないことがある。', 'TSO が動いていないと、利用者はそもそもジョブを投入できない。'],
+      mistakes: [['$S を入れない', 'HELLO は入力キューで待ったまま。利用者からは「流したのに終わらない」と見える。'], ['TSO を起動する前に SUB させる', 'jcl-terminal に「TSO が動いていない」と表示され、投入できない。']],
+    },
+    {
+      id: 'XL2', link: true, title: '「ジョブが終わらない」— データセット待ちを解消する',
+      level: '中級', time: '10分',
+      story: '利用者から電話です。「売上レポートの LINKRPT を流したけれど、いつまでたっても終わらない」。調べると、昨夜の売上更新ジョブ SALESUPD がまだ残っていました。',
+      handoff: ['利用者 USER01: LINKRPT の結果を急ぎで欲しい。', '業務担当（売上）: SALESUPD は昨夜の処理の残り。取り消してよい（今夜もう一度流す）。'],
+      order: ['（利用者役）jcl-terminal のタブで LINKRPT を SUB する。', 'コンソールで、LINKRPT が待っている理由と、原因のジョブを調べる。', '業務担当の了解の範囲で原因を取り除き、LINKRPT を完了させる。'],
+      goal: 'LINKRPT が CC 0000 で終わっていること（利用者のジョブは取り消さない）。',
+      jobs: [SALESUPD], prep: UPALL, prepSay: 'SYSA 稼働中（USER01 は TSO にログオン中）。昨夜の SALESUPD が USER01.SALES.DATA を使ったまま実行中。',
+      checks: [
+        { item: 'LINKRPT がデータセット待ち（IEF099I）になった', fn: (s, ev) => has(ev, 'enq-wait', 'LINKRPT') },
+        { item: '原因の SALESUPD を取り消した', fn: (s, ev) => has(ev, 'cancel', 'SALESUPD') },
+        { item: '利用者の LINKRPT は取り消していない', fn: (s, ev) => !has(ev, 'cancel', 'LINKRPT') },
+        { item: 'LINKRPT が CC 0000 で終わった', fn: s => s.linkResult('LINKRPT') === 'CC 0000' },
+      ],
+      solution: [
+        { op: 'TERM', sub: 'LINKRPT', say: '（利用者役）LINKRPT を SUB。$HASP373 の後に IEF861I・IEF863I（DSN=USER01.SALES.DATA）・IEF099I が出て止まる。' },
+        { op: 'CMD', in: 'D A,L', say: '実行中のジョブを確認。SALESUPD が動いている。LINKRPT は DISP=OLD（排他）で同じデータセットを使うので待っている。' },
+        { op: 'CMD', in: 'C SALESUPD', say: '業務担当の了解どおり SALESUPD を取り消す。データセットが空き、LINKRPT が自動で進んで RC=0000 で終わる。' },
+      ],
+      points: ['IEF099I は「待っているだけ」。時間切れにはならないので、放っておくと終わらない。', 'IEF863I のデータセット名から、同じデータセットを使っているジョブを D A,L や業務担当への確認で探す。', '取り消すのは了解を得た原因のジョブ。待っている側を取り消しても問題は解決しない。'],
+      mistakes: [['C LINKRPT（待っている側を取り消す）', 'LINKRPT が S222 で終わり、利用者は結果を得られない。SALESUPD は残ったまま。'], ['FORCE SALESUPD から始める', 'IEE838I で拒否される（まず CANCEL）。']],
+    },
+    {
+      id: 'XL3', link: true, title: '計画停止の前に、ジョブからの問い合わせに答える',
+      level: '中級', time: '15分',
+      story: '今夜の計画停止の直前に、利用者が月次売上レポート LINKASK を流しました。このジョブは印刷してよいかをオペレーターに尋ねてきます（WTOR）。',
+      handoff: ['業務担当（売上）: 今夜は月次レポートを印刷しない。問い合わせには NO と答えること。', '運用責任者: 停止はいつもの順番で、最後に sysplex から外すこと。'],
+      order: ['（利用者役）jcl-terminal のタブで LINKASK を SUB する。', '問い合わせに指示どおり応答する。', '標準の順序で停止し、V XCF で SYSA を sysplex から外す。'],
+      goal: 'LINKASK が CC 0004（印刷しない）で終わり、SYSA が正しい順序で停止していること。',
+      prep: UPALL, prepSay: 'SYSA 稼働中（USER01 は TSO にログオン中）。',
+      checks: [
+        { item: 'LINKASK の問い合わせに NO と応答した', fn: (s, ev) => has(ev, 'link-reply', 'LINKASK NO') },
+        { item: 'YES と応答していない', fn: (s, ev) => !has(ev, 'link-reply', 'LINKASK YES') },
+        { item: 'LINKASK が CC 0004 で終わった（取り消していない）', fn: s => s.linkResult('LINKASK') === 'CC 0004' },
+        { item: 'JES2 停止 → HALT EOD → V XCF の順', fn: (s, ev) => { const e = ev.find(x => x.type === 'eod'); return !!e && e.jes === 'DOWN' && idx(ev, 'vxcf') > idx(ev, 'eod'); } },
+        { item: 'SYSA が sysplex から外れた（待機状態 0A2）', fn: s => s.phase === 'PARTITIONED' },
+      ],
+      solution: [
+        { op: 'TERM', sub: 'LINKASK', say: '（利用者役）LINKASK を SUB。コンソールに OPR001A の問い合わせが出る。' },
+        { op: 'CMD', in: 'D R,L', say: '応答待ちの一覧で、LINKASK の問い合わせの番号を確かめる。' },
+        { op: 'CMD', in: 'R #OPR001A#,NO', say: '指示どおり NO。LINKASK は印刷ステップを飛ばして RC=0004 で終わる。' },
+        ...SHUT.map((s, k) => k === 0 ? Object.assign({}, s, { say: 'ここから標準の停止。USER01 も IKT010D の対象になる。' }) : s),
+        { op: 'CMD', in: 'V XCF,SYSA,OFFLINE' },
+        { op: 'CMD', in: 'R #IXC371D#,SYSNAME=SYSA' },
+      ],
+      points: ['ジョブの問い合わせ（WTOR）に答えないまま停止を進めると、$P JES2 で $HASP607 になり止まらない。', '「印刷しない」は取り消し（S222）ではなく NO の応答。業務側が結果を区別できるようにする。'],
+      mistakes: [['問い合わせに答えずに $P JES2', '$HASP607・$HASP608 に LINKASK が表示され、JES2 は止まらない。'], ['C LINKASK で取り消す', 'LINKASK は S222 で終わる。業務担当の指示（NO と答える）と違う。'], ['YES と応答', '月次レポートが印刷されてしまう（CC 0000）。']],
+    },
+    {
+      id: 'XL4', link: true, title: '再起動をまたいで、保留ジョブを守る',
+      level: '中級〜上級', time: '20分',
+      story: '保守のため SYSA を再起動します。利用者は、夜間に流したいジョブ HOLDJOB を保留付き（TYPRUN=HOLD）で先に投入しておき、再起動が終わったら流してほしいと言っています。',
+      handoff: ['利用者 USER01: HOLDJOB は再起動が終わってから解放してほしい。', '運用責任者: 再起動では JES2 のスプールを残すこと（ジョブを消さない）。'],
+      order: ['（利用者役）jcl-terminal のタブで HOLDJOB を SUB する（保留のまま入力キューに残る）。', '標準の順序で停止し、HALT EOD の後に HMC からシステムリセットする。', 'ロードパラメーター 0A8200M1 で IPL し、スプールを残して JES2 を起動、VTAM・TCP/IP・TSO を起動する。', 'HOLDJOB が残っていて保留中であることを JES2 コマンドで確かめてから解放し、CC 0000 で終わるのを確認する。'],
+      goal: '再起動後に HOLDJOB が解放され、CC 0000 で終わっていること。',
+      prep: UPALL, prepSay: 'SYSA 稼働中（USER01 は TSO にログオン中）。',
+      checks: [
+        { item: '再起動の前には解放していない', fn: (s, ev) => { const r = idx(ev, 'reset'); const a = idx(ev, 'jes-job', 'A HOLDJOB'); return r >= 0 && (a < 0 || a > r); } },
+        { item: '再起動後の JES2 はウォームスタート（スプールを残した）', fn: (s, ev) => { const r = idx(ev, 'reset'); return r >= 0 && ev.slice(r).some(e => e.type === 'jes-start' && /^WARM/.test(e.detail)) && !ev.slice(r).some(e => e.type === 'jes-start' && /^COLD/.test(e.detail)); } },
+        { item: '$DJ で確かめてから $AJ で解放した', fn: (s, ev) => { const d = idx(ev, 'jes-job', 'D HOLDJOB'), a = idx(ev, 'jes-job', 'A HOLDJOB'); return d >= 0 && a > d; } },
+        { item: 'HOLDJOB が CC 0000 で終わった', fn: s => s.linkResult('HOLDJOB') === 'CC 0000' },
+      ],
+      solution: [
+        { op: 'TERM', sub: 'HOLDJOB', say: '（利用者役）HOLDJOB を SUB。$HASP100 は出るが、保留中なので始まらない。' },
+        ...SHUT,
+        { op: 'RESET', say: 'HMC からシステムリセット（保守作業）。' },
+        { op: 'LOAD', addr: '0A80', lp: '0A8200M1' },
+        { op: 'CMD', in: 'R #$HASP426#,WARM', say: 'スプールを残すので WARM。COLD だと HOLDJOB は消える。' },
+        { op: 'CMD', in: '$S' }, { op: 'CMD', in: 'S VTAM' }, { op: 'CMD', in: 'S TCPIP' }, { op: 'CMD', in: 'S TSO' },
+        { op: 'CMD', in: "$DJ'HOLDJOB'", say: 'HOLDJOB が入力キューに残っていて HOLD=(JOB) であることを確認。' },
+        { op: 'CMD', in: "$AJ'HOLDJOB'", say: '解放 → $HASP373 → $HASP395 RC=0000。' },
+      ],
+      points: ['入力キューのジョブはスプールにあるので、ウォームスタートなら再起動をまたいで残る。コールドスタートではすべて消える。', '保留ジョブは $DJ で状態を確かめてから $AJ で解放する。'],
+      mistakes: [['再起動後に COLD で JES2 を起動', 'HOLDJOB を含むスプール上のジョブと出力がすべて消える。利用者は投入し直しになる。'], ['停止前に $AJ で解放', '停止作業中に HOLDJOB が走りだし、$P JES2 の妨げになる。利用者の依頼とも違う。']],
+    },
+  );
+
   // シナリオを用意する（prep まで実行）。挑戦開始時点の時刻と操作履歴の位置を返す
-  function setup(Sim, x) {
-    const s = new Sim({ scenarios: x.scenarios || [], triggers: x.triggers, jobs: x.jobs });
-    for (const st of x.prep || []) exec(s, st);
-    return { sim: s, start: new Date(s.clock.getTime()), evFrom: s.events.length };
+  // Mock を渡すと、連携演習では模擬の jcl-terminal（link-mock.js）を相手にする（ページの模範解答とテスト用）。
+  // シミュレータの挑戦モードでは Mock を渡さず、別タブの本物の jcl-terminal とつなぐ。
+  function setup(Sim, x, Mock) {
+    const s = new Sim({ scenarios: x.scenarios || [], triggers: x.triggers, jobs: x.jobs, linkDurations: x.linkDurations });
+    const term = x.link && Mock ? new Mock.MockTerm(s) : null;
+    const ctx = { sim: s, term };
+    for (const st of x.prep || []) exec(ctx, st);
+    ctx.start = new Date(s.clock.getTime()); ctx.evFrom = s.events.length;
+    return ctx;
   }
-  function exec(s, st) {
+  function exec(ctx, st) {
+    const r = execStep(ctx.sim, st, ctx.term);
+    if (ctx.term) ctx.term.flush();
+    return r;
+  }
+  function execStep(s, st, term) {
+    if (st.op === 'TERM') { if (term) term.submit(st.sub); return {}; }
     if (st.op === 'LOAD') s.hmcLoad(st.addr, st.lp);
     else if (st.op === 'RESET') s.hmcReset();
     else if (st.op === 'WAIT') s.advance(st.min);
@@ -284,9 +400,9 @@
     return x.checks.map(c => ({ item: c.item, ok: !!c.fn(ctx.sim, ev, ctx.start) }));
   }
   // 模範解答を実行して、ステップごとの出力と採点を返す
-  function runSolution(Sim, x) {
-    const ctx = setup(Sim, x);
-    const steps = x.solution.map(st => { const from = ctx.sim.out.length; const r = exec(ctx.sim, st) || {}; return { step: st, cmd: r.cmd, errs: r.errs || [], out: ctx.sim.out.slice(from) }; });
+  function runSolution(Sim, x, Mock) {
+    const ctx = setup(Sim, x, Mock);
+    const steps = x.solution.map(st => { const from = ctx.sim.out.length; const r = exec(ctx, st) || {}; return { step: st, cmd: r.cmd, errs: r.errs || [], out: ctx.sim.out.slice(from) }; });
     return { sim: ctx.sim, steps, grade: grade(x, ctx), minutes: minutes(ctx.sim, ctx.start) };
   }
 

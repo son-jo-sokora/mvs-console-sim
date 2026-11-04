@@ -65,6 +65,9 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
   <span class="pill" id="pJes">JES2: -</span>
   <span class="pill" id="pVtam">VTAM: -</span>
   <span class="pill" id="pTime">-</span>
+  <span class="pill" id="pLink" title="jcl-terminal との連携">連携: オフ</span>
+  <button id="bLink" style="font-size:12px;padding:2px 8px">連携モード</button>
+  <a id="aTerm" href="../jcl-terminal/?link" target="_blank" rel="noopener" style="color:var(--accent);font-size:13px;display:none">jcl-terminal を開く ↗</a>
   <a href="procedures.html" style="color:var(--accent);font-size:13px;margin-left:auto">手順例</a>
   <a href="scenarios.html" style="color:var(--accent);font-size:13px">演習シナリオ</a>
 </header>
@@ -177,7 +180,7 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
   function showRef(id, isWait) {
     const e = isWait ? MvsRef.WAIT[id] : MvsRef.MSG[id];
     if (!e) return;
-    $('ref').innerHTML = '<div class="id">' + (isWait ? '待機状態コード ' : '') + esc(id) + '</div><p>' + esc(e[2]) + '</p><div class="src">出典: ' + esc(e[0]) + ' p.' + e[1] + '（PDF ページ）</div>';
+    $('ref').innerHTML = '<div class="id">' + (isWait ? '待機状態コード ' : '') + esc(id) + '</div><p>' + esc(e[2]) + '</p><div class="src">出典: ' + esc(e[0]) + (e[1] ? ' p.' + e[1] + '（PDF ページ）' : '') + '</div>';
     switchTab('tRef');
   }
   function switchTab(t) {
@@ -208,6 +211,7 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
   function fresh(scs) {
     exCtx = null; $('procGuide').innerHTML = '';
     sim = new MvsSim({ scenarios: scs });
+    attachLink();
     $('console').innerHTML = '';
     sim.on(addLine);
     addLine({ time: sim.ts(), text: '（シミュレータ）新しい環境を用意しました。シナリオ: ' + (scs.length ? scs.map(s => MvsSim.SCENARIOS[s].label).join(' / ') : 'なし（正常）'), cls: 'sim' });
@@ -238,6 +242,7 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
     while (s.size < n) s.add(keys[Math.floor(Math.random() * keys.length)]);
     exCtx = null; $('procGuide').innerHTML = '';
     sim = new MvsSim({ scenarios: [...s] }); sim.hidden = [...s];
+    attachLink();
     $('console').innerHTML = ''; sim.on(addLine);
     addLine({ time: sim.ts(), text: '（シミュレータ）ランダムな障害を ' + n + ' 個仕込みました（内容は「採点」タブで確認できます）。HMC から LOAD してください。', cls: 'sim' });
     refresh();
@@ -290,6 +295,8 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
     scnBox.querySelectorAll('input').forEach(i => i.checked = false);
     const ctx = MvsExercises.setup(MvsSim, x);
     sim = ctx.sim; exCtx = { x, ctx };
+    if (x.link && !chan) linkOn();
+    attachLink();
     $('console').innerHTML = '';
     addLine({ time: '', text: '（シミュレータ）演習 ' + x.id + '「' + x.title + '」を開始します。' + (x.prepSay ? '開始時の状態: ' + x.prepSay : 'システムは停止しています。'), cls: 'sim' });
     sim.out.forEach(addLine);
@@ -303,12 +310,48 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
       '<h2>連絡事項</h2><ul class="small">' + li(x.handoff) + '</ul>' +
       '<h2>作業指示書</h2><ol>' + li(x.order) + '</ol>' +
       '<h2>完了条件</h2><p class="small">' + esc(x.goal) + '</p>' +
+      (x.link ? '<p class="small" style="color:var(--warn)">この演習は jcl-terminal と一緒に使います。画面上の「jcl-terminal を開く」で別タブに開き、「利用者役」の操作（SUB）はそちらで行ってください。</p>' : '') +
       '<p class="small">途中で「（連絡）」が届くことがあります。ロードパラメーターは自分で入力してください。</p><hr style="border-color:var(--line)">';
     switchTab('tProc');
     refresh();
     return true;
   }
+  // ---- jcl-terminal との連携モード（同じサイトの別タブと BroadcastChannel でやり取り） ----
+  let chan = null, termSeen = 0;
+  function attachLink() { if (chan && sim) sim.setLink(m => chan.postMessage(m)); }
+  function linkOn() {
+    if (chan || typeof BroadcastChannel === 'undefined') return;
+    chan = new BroadcastChannel('mvs-link-v1');
+    chan.onmessage = e => { const m = e.data || {}; if (['hello', 'ping', 'submit'].includes(m.t)) termSeen = Date.now(); if (sim) { sim.linkIn(m); refresh(); } };
+    try { sessionStorage.setItem('mvs-link', '1'); } catch (e) { }
+    attachLink();
+    setInterval(() => { if (sim) sim.linkHeartbeat(); refresh(); }, 4000);
+    refresh();
+  }
+  $('bLink').onclick = () => {
+    if (!chan) { linkOn(); addLine({ time: sim.ts(), text: '（シミュレータ）連携モードにしました。「jcl-terminal を開く」で別タブに jcl-terminal を開くと、USER01 として TSO にログオンし、投入したジョブがこのコンソールの JES2 で実行されます。', cls: 'sim' }); return; }
+    try { sessionStorage.removeItem('mvs-link'); } catch (e) { }
+    chan.postMessage({ t: 'state', sys: 'SYSA', phase: 'OFF', jes: 'DOWN', tso: false, logon: false });
+    location.href = location.pathname;
+  };
+  const _refresh0 = refresh;
+  refresh = function () {
+    _refresh0();
+    const alive = chan && Date.now() - termSeen < 12000;
+    $('pLink').textContent = !chan ? '連携: オフ' : alive ? '連携: jcl-terminal 接続中' : '連携: jcl-terminal 未接続';
+    $('pLink').className = 'pill ' + (!chan ? '' : alive ? 'ok' : 'warn');
+    $('bLink').textContent = chan ? '連携を切る' : '連携モード';
+    $('aTerm').style.display = chan ? '' : 'none';
+  };
+  // テスト（tests/link-e2e.html）から操作するための入口
+  window.MvsUI = {
+    sim: () => sim,
+    newSim(opts) { exCtx = null; sim = new MvsSim(opts || {}); $('console').innerHTML = ''; sim.on(addLine); attachLink(); refresh(); return sim; },
+    startEx: id => startEx(id), exCtx: () => exCtx, linkOn: () => linkOn(),
+  };
   const qs = new URLSearchParams(location.search);
+  let wantLink = qs.has('link'); try { wantLink = wantLink || sessionStorage.getItem('mvs-link') === '1'; } catch (e) { }
+  if (wantLink) linkOn();
   if (!((qs.get('ex') && startEx(qs.get('ex'))) || (qs.get('proc') && startProc(qs.get('proc'))))) fresh([]);
 })();
 </script>

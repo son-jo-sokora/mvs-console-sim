@@ -2,9 +2,9 @@
 
 z/OS 3.2 のマニュアルを検索して洗い出したエラーのうち、オペレーターの IPL・停止操作で起こるものをシミュレータで再現し、1件ずつテストにしたものです。
 
-**シミュレータで再現・テストしているケース: 86 件**（結果は tests/run.html で確認できます）
+**シミュレータで再現・テストしているケース: 104 件**（結果は tests/run.html で確認できます）
 
-マニュアルから機械抽出した候補は **全 387 件**（[error-candidates.md](error-candidates.md)）。そのうち、ここに載せたテストで再現しているメッセージ・待機状態コードは 50 件です。残りの大半はハードウェア・導入設定（PARMLIB の中身）・内部障害に起因するもので、オペレーター操作の練習には向かないため対象外としました。操作に関係するが未対応のものは、IEA338A・IEA341A（個別パラメーターの再指定）、IEA527A（SYSNAME 未指定）、IXC402D（相手システムの停止確認）、$HASP490（ホットスタート拒否）、$HASP620（停止処理中のコマンド拒否）、$HASP098・$HASP070（JES2 異常時の終了オプション）、$HASP454 に N と答えた後の HASP416/HASP417 の確認対話です。
+マニュアルから機械抽出した候補は **全 387 件**（[error-candidates.md](error-candidates.md)）。そのうち、ここに載せたテストで再現しているメッセージ・待機状態コードは 51 件です。残りの大半はハードウェア・導入設定（PARMLIB の中身）・内部障害に起因するもので、オペレーター操作の練習には向かないため対象外としました。操作に関係するが未対応のものは、IEA338A・IEA341A（個別パラメーターの再指定）、IEA527A（SYSNAME 未指定）、IXC402D（相手システムの停止確認）、$HASP490（ホットスタート拒否）、$HASP620（停止処理中のコマンド拒否）、$HASP098・$HASP070（JES2 異常時の終了オプション）、$HASP454 に N と答えた後の HASP416/HASP417 の確認対話です。
 
 - テストの実行: ブラウザで `tests/run.html` を開く、または `node tests/run-tests.js`（詳細出力は環境変数 `VERBOSE=1`）
 - ケースの定義: `tests/cases.js`（この一覧は `node tools/make_errors_md.js` で再生成）
@@ -134,6 +134,29 @@ z/OS 3.2 のマニュアルを検索して洗い出したエラーのうち、�
 | E82 | V XCF の取消し（C） | — | `IXC371D` → `取り消しました` | IXC371D: z/OS MVS System Messages Vol 10 (IXC-IZP) p.325 |
 | E83 | V XCF に sysplex 外のシステム名 | — | `sysplex PLEX1 のシステムではありません` | （シミュレータ注記） |
 | E84 | 表示コマンド（D T / D A,L / D R,L / $DU / $D JES2） | — | `IEE136I LOCAL` → `IEE114I` → `IEE112I` → `$HASP608` → `$HASP608` | IEE136I: z/OS MVS System Messages Vol 7 (IEB-IEE) p.825<br>IEE114I: Redbook ABCs of z/OS System Programming Vol 8 SG24-6988-01（z/OS 1.13） p.138<br>IEE112I: z/OS MVS System Messages Vol 7 (IEB-IEE) p.813 |
+
+## J. jcl-terminal との連携（2つのタブをつないだとき）（18 件）
+
+| No. | 状況・操作 | 前提シナリオ | 期待される応答 | 出典 |
+|---|---|---|---|---|
+| L01 | TSO を起動すると、jcl-terminal の USER01 がログオンする | — | `IKT007I` → `（連携）USER01（jcl-terminal）が TSO にログオン` | IKT007I: z/OS Communications Server SNA Messages p.55 |
+| L02 | TSO が動いていないと、jcl-terminal から投入できない | — |  | （シミュレータ注記） |
+| L03 | jcl-terminal で投入したジョブがコンソールに現れて終わる | — | `$HASP100 HELLO    ON INTRDR` → `$HASP373 HELLO` → `$HASP395 HELLO    ENDED - RC=0000` | $HASP100: z/OS JES2 Messages p.125<br>$HASP373: z/OS JES2 Messages p.307<br>$HASP395: z/OS JES2 Messages p.310 |
+| L04 | $S を入れる前（$HASP400）に投入したジョブは、$S まで始まらない | — | `$HASP400` → `$HASP100 HELLO` → `$S` → `$HASP373 HELLO` → `$HASP395 HELLO` | $HASP400: z/OS JES2 Messages p.313<br>$HASP100: z/OS JES2 Messages p.125<br>$HASP373: z/OS JES2 Messages p.307 |
+| L05 | $P の後に投入したジョブは、$S まで始まらない（投入は受け付ける） | — | `$HASP100 HELLO` → `$S` → `$HASP373 HELLO` | $HASP100: z/OS JES2 Messages p.125<br>$HASP373: z/OS JES2 Messages p.307 |
+| L06 | データセット使用中 → IEF861I/IEF863I/IEF099I で待ち、使用中のジョブを取り消すと動く | — | `$HASP373 SALESUPD` → `$HASP373 LINKRPT` → `IEF861I FOLLOWING RESERVED DATA SET NAMES UNAVAILABLE TO LINKRPT` → `IEF863I DSN=USER01.SALES.DATA LINKRPT` → `IEF099I JOB LINKRPT WAITING FOR DATA SETS` → `IEE114I` → `IEE301I SALESUPD CANCEL COMMAND ACCEPTED` → `$HASP395 SALESUPD` → `$HASP395 LINKRPT  ENDED - RC=0000` | $HASP373: z/OS JES2 Messages p.307<br>IEF861I: z/OS MVS System Messages Vol 8 (IEF-IGD) p.430<br>IEF863I: z/OS MVS System Messages Vol 8 (IEF-IGD) p.431 |
+| L07 | データセット待ちのジョブ自身を取り消す（S222） | — | `IEF099I` → `IEE301I LINKRPT CANCEL COMMAND ACCEPTED` → `$HASP395 LINKRPT  ENDED - ABEND=S222` | IEF099I: z/OS MVS System Messages Vol 8 (IEF-IGD) p.77<br>IEE301I: z/OS MVS System Messages Vol 7 (IEB-IEE) p.978<br>$HASP395: z/OS JES2 Messages p.310 |
+| L08 | ジョブの問い合わせ（OPRASK）がコンソールに出る。不正な応答 → 再質問、NO で RC=0004 | — | `OPR001A OK TO PRINT MONTHLY SALES REPORT. REPLY YES OR NO` → `OPR003I LINKASK  REPLY 'MAYBE' IS NOT VALID` → `OPR001A` → `$HASP395 LINKASK  ENDED - RC=0004` | OPR001A: jcl-terminal の練習用プログラム OPRASK のメッセージ（IBM の製品ではない）<br>OPR003I: jcl-terminal の練習用プログラム OPRASK のメッセージ（IBM の製品ではない）<br>$HASP395: z/OS JES2 Messages p.310 |
+| L09 | 問い合わせ中のジョブを取り消すと、応答待ちも消える | — | `OPR001A` → `IEE301I LINKASK` → `$HASP395 LINKASK  ENDED - ABEND=S222` → `RM=0` | OPR001A: jcl-terminal の練習用プログラム OPRASK のメッセージ（IBM の製品ではない）<br>IEE301I: z/OS MVS System Messages Vol 7 (IEB-IEE) p.978<br>$HASP395: z/OS JES2 Messages p.310 |
+| L10 | TYPRUN=HOLD のジョブを $DJ で確かめ、$AJ で解放 | — | `$HASP100 HOLDJOB` → `$HASP890 JOB(HOLDJOB)` → `$HASP373 HOLDJOB` → `$HASP395 HOLDJOB  ENDED - RC=0000` | $HASP100: z/OS JES2 Messages p.125<br>$HASP890: z/OS JES2 Messages p.632<br>$HASP373: z/OS JES2 Messages p.307 |
+| L11 | 実行前のジョブを $CJ で取り消す | — | `実行前に取り消されました` | （シミュレータ注記） |
+| L12 | 存在しないジョブを指定 → $HASP003 RC=(52) | — | `$HASP003 RC=(52)` | $HASP003: z/OS JES2 Messages p.30 |
+| L13 | jcl-terminal の SDSF 行コマンド A が、JES2 の $AJ としてオペレーター側で処理される | — | `$AJ` → `$HASP373 HOLDJOB` → `$HASP395 HOLDJOB` | $HASP373: z/OS JES2 Messages p.307<br>$HASP395: z/OS JES2 Messages p.310 |
+| L14 | 連携ジョブの実行中は $P JES2 で止まらない（$HASP608 に表示） | — | `$HASP373 LINKRPT` → `$HASP607` → `$HASP608` → `$HASP395 LINKRPT  ENDED - RC=0000` | $HASP373: z/OS JES2 Messages p.307<br>$HASP607: z/OS JES2 Messages p.463<br>$HASP608: z/OS JES2 Messages p.465 |
+| L15 | P TSO で USER01 が IKT010D の対象になり、SIC でログオフ | — | `IKT010D 00001 USER(S) ACTIVE` → `TSO セッションが終了` | IKT010D: z/OS Communications Server SNA Messages p.56 |
+| L16 | 実行中にシステムが落ちる → ウォームスタートで $HASP406、再実行される | — | `$HASP373 LINKRPT` → `システムリセット` → `$HASP479` → `$HASP406 LINKRPT  WAS EXECUTING ON MEMBER SYSA` → `$HASP373 LINKRPT` → `$HASP395 LINKRPT  ENDED - RC=0000` | $HASP373: z/OS JES2 Messages p.307<br>$HASP479: z/OS JES2 Messages p.369<br>$HASP406: z/OS JES2 Messages p.316 |
+| L17 | コールドスタートすると、jcl-terminal から投入したジョブは消える | — | `$HASP100 HOLDJOB` → `$HASP436` → `ジョブと出力もすべて失われました` | $HASP100: z/OS JES2 Messages p.125<br>$HASP436: z/OS JES2 Messages p.337 |
+| L18 | JCL エラーのジョブは実行されずに終わる（IEFC452I / $HASP396） | — | `$HASP100 BADJCL` → `IEFC452I BADJCL - JOB NOT RUN - JCL ERROR` → `$HASP396 BADJCL   TERMINATED` | $HASP100: z/OS JES2 Messages p.125<br>IEFC452I: z/OS MVS System Messages Vol 8 (IEF-IGD) p.532<br>$HASP396: z/OS JES2 Messages p.311 |
 
 ## I. 正常系（基準）（2 件）
 

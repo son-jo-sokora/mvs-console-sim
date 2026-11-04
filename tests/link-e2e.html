@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>連携の結合テスト</title>
+<style>
+:root { --bg: #11151a; --panel: #1a2027; --line: #2f3a46; --text: #d7dee6; --muted: #8b98a6; --ok: #4cc38a; --bad: #ff6b6b; --accent: #5fb3ff; --mono: "Cascadia Mono", Consolas, monospace; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.6 "Yu Gothic UI", "Meiryo", system-ui, sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 18px; } a { color: var(--accent); }
+.sum { font-size: 16px; font-weight: 600; padding: 10px 14px; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); }
+.sum.ok { border-color: #2d6a4f; color: var(--ok); } .sum.ng { border-color: #7a2e2e; color: var(--bad); }
+details { border-bottom: 1px solid var(--line); padding: 4px 0; } summary { cursor: pointer; }
+.m { display: inline-block; width: 1.3em; } .ok .m { color: var(--ok); } .ng .m { color: var(--bad); }
+.id { font-family: var(--mono); color: var(--muted); margin-right: 6px; }
+.err { color: var(--bad); font-size: 13px; margin: 4px 0 0 1.6em; }
+pre { background: #050805; color: #4fe36b; font: 12px/1.4 var(--mono); padding: 8px; border-radius: 4px; white-space: pre-wrap; margin: 6px 0 6px 1.6em; }
+.frames { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 16px; }
+iframe { width: 100%; height: 420px; border: 1px solid var(--line); background: #000; }
+.small { color: var(--muted); font-size: 13px; }
+button { font-size: 14px; padding: 6px 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>jcl-terminal 連携の結合テスト <a href="run.html" style="font-size:13px">← 単体テスト</a></h1>
+  <p class="small">本物の jcl-terminal（../../jcl-terminal/）とシミュレータを下の2つの枠で開き、連携のテストケース（tests/cases.js の L で始まるもの）と、連携演習の模範解答を、実際にやり取りさせて確かめます。GitHub Pages のように、2つが同じサイト（同じオリジン）にあるときだけ動きます。連携モードの jcl-terminal やシミュレータを別のタブで開いていると結果が乱れるので、閉じてから実行してください。数分かかります。</p>
+  <button id="go">実行する</button>
+  <div id="sum" class="sum" style="margin-top:12px">未実行</div>
+  <div id="list"></div>
+  <div class="frames"><iframe id="ops" title="シミュレータ"></iframe><iframe id="term" title="jcl-terminal"></iframe></div>
+</main>
+<script src="../engine.js"></script>
+<script src="../scenarios.js"></script>
+<script src="cases.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // 2つの枠のやり取りを外から見て、静かになるまで待つ（このページからは送信しない）
+  let last = Date.now();
+  const obs = new BroadcastChannel('mvs-link-v1'); obs.onmessage = () => { last = Date.now(); };
+  async function settle() { await sleep(150); while (Date.now() - last < 700) await sleep(100); }
+  // 枠の中のスクリプトエラーも失敗として数える
+  let frameErrors = [];
+  const load = (el, url) => new Promise(r => { el.onload = () => { try { el.contentWindow.addEventListener('error', e => frameErrors.push(el.id + ': ' + e.message)); } catch (e) { } r(); }; el.src = url; });
+  let O, T;
+  async function fresh(opts) {
+    await load($('term'), '../../jcl-terminal/index.html?test&link&r=' + Math.random());
+    T = $('term').contentWindow;
+    if (!T.JclLink) throw new Error('jcl-terminal が連携モードで開けません（同じサイトに jcl-terminal がない可能性）');
+    const s = O.MvsUI.newSim(opts);
+    await settle();
+    return s;
+  }
+  async function step(s, st) {
+    if (Array.isArray(st)) {
+      if (st[0] === 'LOAD') s.hmcLoad(st[1], st[2]);
+      else if (st[0] === 'RESET') s.hmcReset();
+      else if (st[0] === 'WAIT') s.advance(st[1]);
+      else if (st[0] === 'TERM') T.JclLink.submitMember(st[1]);
+      else if (st[0] === 'LINECMD') T.JclLink.lineCmd(st[1], st[2]);
+    } else {
+      const errs = [];
+      const cmd = st.replace(/#([^#]+)#/g, (_, mid) => { const p = s.pending().find(x => x.msgid === mid); if (!p) { errs.push(mid); return '99'; } return p.id; });
+      s.command(cmd);
+      if (errs.length) return errs;
+    }
+    await settle();
+    return [];
+  }
+  const termResult = name => { const j = T.JclLink.jobs().filter(x => x.name === name)[0]; return j ? (j.maxcc || j.queue) : null; };
+
+  async function runCase(c) {
+    const s = await fresh({ scenarios: c.scenarios || [], jobs: c.jobs, linkDurations: c.linkDurations });
+    const errs = [];
+    for (const st of c.steps) (await step(s, st)).forEach(m => errs.push(`手順 "${st}": 応答待ちの ${m} がない`));
+    const text = s.out.map(r => r.text);
+    let pos = 0;
+    for (const e of c.expect || []) { let k = pos; while (k < text.length && !text[k].includes(e)) k++; if (k >= text.length) errs.push(`期待 "${e}" が（順序どおりに）出ていない`); else pos = k + 1; }
+    for (const [head, words] of Object.entries(c.expectIn || {})) { const rec = text.find(t => t.startsWith(head)); if (!rec) errs.push(`"${head}" の行がない`); else words.forEach(w => { if (!rec.includes(w)) errs.push(`"${head}" の中に "${w}" がない`); }); }
+    for (const e of c.notExpect || []) if (text.some(t => t.includes(e))) errs.push(`出てはいけない "${e}" が出た`);
+    for (const [name, want] of Object.entries(c.term || {})) { const got = termResult(name); if (got !== want) errs.push(`jcl-terminal の ${name}: ${got}（期待 ${want}）`); }
+    for (const [k, v] of Object.entries(c.termState || {})) { const st = T.JclLink.state() || {}; if (st[k] !== v) errs.push(`jcl-terminal の状態 ${k}=${st[k]}（期待 ${v}）`); }
+    if (c.refused) c.steps.filter(x => Array.isArray(x) && x[0] === 'TERM').forEach(x => { if (termResult(x[1]) !== null) errs.push(`${x[1]} が投入されてしまった`); });
+    return { id: c.id, title: c.title, ok: !errs.length, errs, text };
+  }
+  async function runExercise(x) {
+    // 演習の開始状態（prep）をシミュレータの挑戦モードで作り、模範解答を本物の jcl-terminal 相手に流す
+    await load($('term'), '../../jcl-terminal/index.html?test&link&r=' + Math.random());
+    T = $('term').contentWindow;
+    O.MvsUI.startEx(x.id); await settle();
+    const ex = O.MvsUI.exCtx(), s = ex.ctx.sim, errs = [];
+    for (const st of x.solution) {
+      if (st.op === 'LOAD') s.hmcLoad(st.addr, st.lp);
+      else if (st.op === 'RESET') s.hmcReset();
+      else if (st.op === 'WAIT') s.advance(st.min);
+      else if (st.op === 'TERM') T.JclLink.submitMember(st.sub);
+      else if (st.op === 'CMD') { const cmd = st.in.replace(/#([^#]+)#/g, (_, m) => { const p = s.pending().find(q => q.msgid === m); if (!p) { errs.push('応答待ちの ' + m + ' がない'); return '99'; } return p.id; }); s.command(cmd); }
+      await settle();
+    }
+    const g = O.MvsExercises.grade(x, ex.ctx);
+    g.filter(i => !i.ok).forEach(i => errs.push('採点 ✗: ' + i.item));
+    return { id: x.id, title: x.title + '（連携演習の模範解答）', ok: !errs.length, errs, text: s.out.map(o => o.text) };
+  }
+
+  $('go').onclick = async () => {
+    $('go').disabled = true; $('list').innerHTML = ''; $('sum').className = 'sum'; $('sum').textContent = '準備中…';
+    await load($('ops'), '../index.html?link');
+    O = $('ops').contentWindow; O.MvsUI.linkOn();
+    const todo = MvsCases.filter(c => c.link).map(c => ['case', c]).concat(MvsExercises.SCENARIOS.filter(x => x.link).map(x => ['ex', x]));
+    const res = [];
+    for (const [k, item] of todo) {
+      $('sum').textContent = `実行中 ${res.length + 1} / ${todo.length}: ${item.id}`;
+      let r;
+      frameErrors = [];
+      try { r = k === 'case' ? await runCase(item) : await runExercise(item); }
+      catch (e) { r = { id: item.id, title: item.title, ok: false, errs: [String(e)], text: [] }; }
+      if (frameErrors.length) { r.ok = false; r.errs.push(...[...new Set(frameErrors)].map(e => 'スクリプトエラー ' + e)); }
+      res.push(r);
+      $('list').insertAdjacentHTML('beforeend', `<details class="${r.ok ? 'ok' : 'ng'}" ${r.ok ? '' : 'open'}><summary><span class="m">${r.ok ? '✓' : '✗'}</span><span class="id">${r.id}</span>${esc(r.title)}</summary>${r.errs.map(e => `<div class="err">${esc(e)}</div>`).join('')}<pre>${esc(r.text.join('\n'))}</pre></details>`);
+    }
+    const pass = res.filter(r => r.ok).length;
+    $('sum').textContent = `${res.length} 件中 ${pass} 件成功 / ${res.length - pass} 件失敗`;
+    $('sum').className = 'sum ' + (pass === res.length ? 'ok' : 'ng');
+    $('go').disabled = false;
+    window.E2E_RESULT = { total: res.length, pass, failed: res.filter(r => !r.ok).map(r => r.id) };
+  };
+})();
+</script>
+</body>
+</html>

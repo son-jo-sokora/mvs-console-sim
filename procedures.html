@@ -134,7 +134,7 @@ table.lp th { background: var(--panel2); font-weight: 600; }
         const w = out.map(o => /待機状態コード ([0-9A-F]{3})/.exec(o.text)).filter(Boolean).map(m => m[1]);
         if (ids.length || w.length) {
           h += '<details class="ex"><summary>メッセージの解説（' + (ids.length + w.length) + '）</summary><dl>';
-          for (const id of ids) { const e = MvsRef.MSG[id]; h += '<dt>' + esc(id) + '</dt><dd>' + esc(e[2]) + ' <span class="src">' + esc(e[0]) + ' p.' + e[1] + '</span></dd>'; }
+          for (const id of ids) { const e = MvsRef.MSG[id]; h += '<dt>' + esc(id) + '</dt><dd>' + esc(e[2]) + ' <span class="src">' + esc(e[0]) + (e[1] ? ' p.' + e[1] : '') + '</span></dd>'; }
           for (const c of w) { const e = MvsRef.WAIT[c]; if (e) h += '<dt>待機 ' + c + '</dt><dd>' + esc(e[2]) + ' <span class="src">' + esc(e[0]) + ' p.' + e[1] + '</span></dd>'; }
           h += '</dl></details>';
         }

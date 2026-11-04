@@ -76,29 +76,40 @@ table.mis th { background: var(--panel2); font-weight: 600; }
         <li>このページの「解答と解説」を開くと、模範解答（実際の画面つき）、判断のポイント、よくある誤りが見られます。</li>
       </ol>
       <p class="small">模範解答の画面は、ページを開いたときにシミュレータで実際に流して作っています。採点結果も同時に計算し、すべての項目が OK になることを確認しています。</p>
+      <h2 style="margin-top:18px">連携演習（XL1〜XL4）について</h2>
+      <p>連携演習は、<a href="../jcl-terminal/" style="color:var(--accent)">jcl-terminal</a>（JCL 練習端末）と一緒に使います。あなたはオペレーターと利用者（USER01）の二役をします。</p>
+      <ol>
+        <li>「シミュレータで挑戦する」を押すと、シミュレータが<b>連携モード</b>で開きます。</li>
+        <li>シミュレータの上にある「jcl-terminal を開く」で、別のタブに jcl-terminal を開きます（右上に「連携モード」と表示されます）。</li>
+        <li>オペレーターの操作はシミュレータのコンソールで、利用者の操作（ジョブの SUB）は jcl-terminal で行います。jcl-terminal で投入したジョブは、シミュレータの JES2 で実行されます。</li>
+      </ol>
+      <p class="small">連携演習の模範解答の画面は、jcl-terminal の代わりに同じ受け答えをする模擬端末（link-mock.js）を相手に作っています。本物の jcl-terminal でも同じ結果になることは、tests/link-e2e.html で確かめています。</p>
     </div>
     <div id="list"></div>
   </main>
 </div>
 <script src="msgref.js"></script>
 <script src="engine.js"></script>
+<script src="link-mock.js"></script>
 <script src="scenarios.js"></script>
 <script>
 (() => {
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   const nav = document.getElementById('nav'), list = document.getElementById('list');
+  let linkHead = false;
   for (const x of MvsExercises.SCENARIOS) {
+    if (x.link && !linkHead) { linkHead = true; nav.insertAdjacentHTML('beforeend', '<div style="color:var(--accent);font-weight:600;margin:12px 0 4px">連携演習（jcl-terminal と一緒に）</div>'); list.insertAdjacentHTML('beforeend', '<h2 style="font-size:17px;margin:28px 0 12px">連携演習（jcl-terminal と一緒に使う）</h2>'); }
     nav.insertAdjacentHTML('beforeend', '<a href="#' + x.id + '"><span class="no">' + x.id + '</span>' + esc(x.title) + '</a>');
-    const r = MvsExercises.runSolution(MvsSim, x);
+    const r = MvsExercises.runSolution(MvsSim, x, MvsLinkMock);
     let h = '<section class="ex" id="' + x.id + '">';
     h += '<h2><span class="no">' + x.id + '</span>' + esc(x.title) + '</h2>';
-    h += '<span class="tag">難易度: ' + esc(x.level) + '</span><span class="tag">目安: ' + esc(x.time) + '</span>';
+    h += '<span class="tag">難易度: ' + esc(x.level) + '</span><span class="tag">目安: ' + esc(x.time) + '</span>' + (x.link ? '<span class="tag" style="color:var(--accent)">jcl-terminal と連携</span>' : '');
     h += '<div class="label">状況</div><p style="margin:4px 0">' + esc(x.story) + '</p>';
     h += '<div class="label">連絡事項</div><div class="box memo"><ul>' + x.handoff.map(m => '<li>' + esc(m) + '</li>').join('') + '</ul></div>';
     h += '<div class="label">作業指示書</div><div class="box order"><ol>' + x.order.map(m => '<li>' + esc(m) + '</li>').join('') + '</ol></div>';
     h += '<div class="label">完了条件</div><div class="goal">' + esc(x.goal) + '</div>';
     h += '<div class="label">採点項目</div><ul>' + x.checks.map(c => '<li>' + esc(c.item) + '</li>').join('') + '</ul>';
-    h += '<a class="btn" href="index.html?ex=' + x.id + '">シミュレータで挑戦する</a>';
+    h += '<a class="btn" href="index.html?ex=' + x.id + (x.link ? '&link' : '') + '">シミュレータで挑戦する</a>' + (x.link ? ' <a class="btn" style="background:#2a3a1d;border-color:#4a6a2c" href="../jcl-terminal/?link" target="_blank" rel="noopener">jcl-terminal を開く ↗</a>' : '');
     h += '<details class="ans"><summary>解答と解説（挑戦してから開いてください）</summary>';
     h += '<div class="label">判断のポイント</div><ul>' + x.points.map(p => '<li>' + esc(p) + '</li>').join('') + '</ul>';
     h += '<div class="label">模範解答</div>';
@@ -112,6 +123,7 @@ table.mis th { background: var(--panel2); font-weight: 600; }
       else if (st.op === 'WAIT') h += '<div class="act"><span class="kind">待つ</span>' + st.min + ' 分</div>';
       else if (st.op === 'RESET') h += '<div class="act"><span class="kind">HMC</span>システムリセット</div>';
       else if (st.op === 'NOTE') h += '<div class="act note">確認・判断</div>';
+      else if (st.op === 'TERM') h += '<div class="act"><span class="kind">jcl-terminal（利用者役）</span><code>' + esc(st.sub) + '</code> を開いて <code>SUB</code></div>';
       if (st.say) h += '<div>' + esc(st.say) + '</div>';
       const out = s.out.filter(o => !(o.cls === 'cmd' && o.text === s.cmd));
       if (out.length) h += '<details class="out"' + (out.some(o => o.cls === 'wtor' || o.cls === 'error' || o.text.startsWith('（連絡）') || o.cls === 'hmc') ? ' open' : '') + '><summary>画面（' + out.length + ' 行）</summary><pre class="con">' + out.map(o => '<span class="' + o.cls + '">' + esc(o.text) + '</span>').join('\n') + '</pre></details>';

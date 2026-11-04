@@ -13,6 +13,12 @@
     { id: 'X3-W1', ex: 'X3', title: '05F の後も Enter で再 IPL を繰り返す', mutate: [['R 00,02', [C('')]]], fail: ['02 と応答', 'ウォームスタート', '業務開始状態'] },
     { id: 'X4-W1', ex: 'X4', title: 'ジョブを片付けずに $P JES2,ABEND', mutate: [['C BKUP', []], ['D A,L', []], ['C BKUP,A=20', []], ['C BKUP,A=21', []], ['C HUNGJOB', []], ['FORCE HUNGJOB,ARM', []], ['$PJES2', [C('$PJES2,ABEND')]]], fail: ['A= で1本ずつ', 'FORCE ,ARM', 'ABEND を使っていない'] },
     { id: 'X4-W2', ex: 'X4', title: '時間をかけすぎる（20 分待つ）', mutate: [['$P', [C('$P'), { op: 'WAIT', min: 20 }]]], fail: ['15 分以内'] },
+    { id: 'XL1-W1', ex: 'XL1', title: '$S を入れない（HELLO が始まらない）', mutate: [['$S', []]], fail: ['CC 0000', '業務開始状態'] },
+    { id: 'XL2-W1', ex: 'XL2', title: '待っている LINKRPT を取り消す', mutate: [['C SALESUPD', [C('C LINKRPT')]]], fail: ['SALESUPD を取り消した', 'LINKRPT は取り消していない', 'CC 0000'] },
+    { id: 'XL3-W1', ex: 'XL3', title: '問い合わせに YES と応答', mutate: [['R #OPR001A#,NO', [C('R #OPR001A#,YES')]]], fail: ['NO と応答した', 'YES と応答していない', 'CC 0004'] },
+    { id: 'XL3-W2', ex: 'XL3', title: '問い合わせに答えず LINKASK を取り消す', mutate: [['R #OPR001A#,NO', [C('C LINKASK')]]], fail: ['NO と応答した', 'CC 0004'] },
+    { id: 'XL4-W1', ex: 'XL4', title: '再起動後に COLD で JES2 を起動', mutate: [['R #$HASP426#,WARM', [C('R #$HASP426#,COLD'), C('R #$HASP441#,Y')]]], fail: ['ウォームスタート', '$DJ で確かめて', 'HOLDJOB が CC 0000'] },
+    { id: 'XL4-W2', ex: 'XL4', title: '停止前に解放してしまう', mutate: [['P TSO', [C("$AJ'HOLDJOB'"), C('P TSO')]]], fail: ['再起動の前には解放していない', '$DJ で確かめて'] },
     { id: 'X5-W1', ex: 'X5', title: '初回なのに WARM で始めて遠回り', mutate: [['R #$HASP426#,COLD', [C('R #$HASP426#,WARM'), C('R #$HASP454#,Y'), C('R #$HASP272#,TERM'), C('S JES2'), C('R #$HASP426#,COLD')]]], fail: ['遠回り'] },
   ];
   if (typeof module !== 'undefined' && module.exports) module.exports = CASES; else root.MvsExerciseCases = CASES;
