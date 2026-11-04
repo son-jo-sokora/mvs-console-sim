@@ -1,9 +1,12 @@
-# MVS IPL シミュレータ
+# MVS コンソール シミュレータ
 
-ブラウザだけで動く、z/OS（MVS）の IPL とシャットダウンを練習するためのシミュレータです。
-HMC からシステムを LOAD し、オペレーターコンソールで初期化中の質問に応答して JES2・VTAM・TCP/IP・TSO を立ち上げ、決められた順番で止めるところまでを体験できます。
+ブラウザだけで動く、z/OS（MVS）のオペレーターコンソールのシミュレータです。
+HMC からシステムを LOAD し、初期化中の質問に応答して JES2・VTAM・TCP/IP・TSO を立ち上げ、決められた順番で止めるまでの IPL・停止の操作を体験できます。あわせて、ジョブの取り消し・保留・問い合わせへの応答といった日々の運用や、SYSLOG を読んで障害の原因を探す調査も練習できます。
 
-### ▶ 今すぐ試す: https://son-jo-sokora.github.io/mvs-ipl-sim/
+> [!NOTE]
+> このリポジトリの旧名は `mvs-ipl-sim` です。公開ページの URL も `https://son-jo-sokora.github.io/mvs-console-sim/` に変わりました（旧 URL のブックマークは使えません）。
+
+### ▶ 今すぐ試す: https://son-jo-sokora.github.io/mvs-console-sim/
 
 上のリンクを開くだけで使えます。ダウンロードやインストールは要りません。
 
@@ -11,8 +14,9 @@ HMC からシステムを LOAD し、オペレーターコンソールで初期�
 - メインフレームの実機やアカウントは要りません。
 - 「障害シナリオ」を選ぶと、ボリューム名の重複、マスターカタログの指定誤り、JES2 のチェックポイントのロック残り、取り消しできないジョブなどを仕込めます。間違え方と回復の練習に使えます。
 - コンソールのメッセージをクリックすると、意味と z/OS 3.2 マニュアルの出典ページが表示されます。
-- [IPL・停止の手順例（16本）](https://son-jo-sokora.github.io/mvs-ipl-sim/procedures.html) から、同じ状況をシミュレータで試せます。
-- 付録の[演習シナリオ（17本）](https://son-jo-sokora.github.io/mvs-ipl-sim/scenarios.html)は、計画停止から再 IPL までを通しで行う練習問題です。答えを見ずに挑戦し、採点と解説で確認できます。
+- [IPL・停止の手順例（16本）](https://son-jo-sokora.github.io/mvs-console-sim/procedures.html) から、同じ状況をシミュレータで試せます。
+- コンソールの上の「SYSLOG」タブで、コマンドを含むすべての記録を時刻つきで検索できます。夜のあいだの記録から障害の原因を推定する演習にも使います。
+- 付録の[演習シナリオ（17本）](https://son-jo-sokora.github.io/mvs-console-sim/scenarios.html)は、停止・IPL・ジョブの運用・SYSLOG での調査を通しで行う練習問題です（基本・連携・SYSLOG 調査・複合）。答えを見ずに挑戦し、採点と解説で確認できます。
 - **[JCL 練習端末（jcl-terminal）](https://son-jo-sokora.github.io/jcl-terminal/)と連携できます。** 別のタブの jcl-terminal で投入したジョブが、このシミュレータの JES2 で実行されます。データセットの奪い合い、ジョブからの問い合わせ、保留ジョブ、再起動をまたぐジョブなど、利用者とオペレーターが関わる場面を体験できます（[5. 連携モード](#5-jcl-terminal-との連携モード)）。
 
 > [!IMPORTANT]
@@ -54,7 +58,7 @@ $HASP492 JES2 ALL-MEMBER WARM START HAS COMPLETED
 
 必要なのは、新しめのブラウザ（Chrome、Edge、Firefox、Safari）だけです。
 
-**とりあえず触ってみたいだけなら、[公開ページ](https://son-jo-sokora.github.io/mvs-ipl-sim/) を開けば十分です。** 自分の PC に置いて使いたい人や、改造したい人は、次の3つの方法から選んでください。
+**とりあえず触ってみたいだけなら、[公開ページ](https://son-jo-sokora.github.io/mvs-console-sim/) を開けば十分です。** 自分の PC に置いて使いたい人や、改造したい人は、次の3つの方法から選んでください。
 
 ### 方法 A: ZIP をダウンロードして開く（いちばん簡単）
 
@@ -140,7 +144,7 @@ python -m http.server 8000
 
 ## 4. 手順例・演習シナリオ・障害シナリオ
 
-[procedures.html](https://son-jo-sokora.github.io/mvs-ipl-sim/procedures.html) に、16本の手順例があります。各手順の画面出力は、ページを開いたときにシミュレータで実際に操作を流して作っているので、シミュレータの表示と一致します。各手順の「シミュレータで試す」を押すと、同じ障害を仕込んだ状態でシミュレータが開きます。
+[procedures.html](https://son-jo-sokora.github.io/mvs-console-sim/procedures.html) に、16本の手順例があります。各手順の画面出力は、ページを開いたときにシミュレータで実際に操作を流して作っているので、シミュレータの表示と一致します。各手順の「シミュレータで試す」を押すと、同じ障害を仕込んだ状態でシミュレータが開きます。
 
 | 種類 | 手順例 |
 |---|---|
@@ -150,7 +154,7 @@ python -m http.server 8000
 
 ### 付録：演習シナリオ
 
-[scenarios.html](https://son-jo-sokora.github.io/mvs-ipl-sim/scenarios.html) は、一晩・一日の業務を通しで行う練習問題です。手順例と違って正解の手順は最初に示さず、状況・連絡事項・作業指示書だけを渡します。途中で「（連絡）」が届いたり、作業の途中で新しいトラブルが起きたりします。
+[scenarios.html](https://son-jo-sokora.github.io/mvs-console-sim/scenarios.html) は、一晩・一日の業務を通しで行う練習問題です。手順例と違って正解の手順は最初に示さず、状況・連絡事項・作業指示書だけを渡します。途中で「（連絡）」が届いたり、作業の途中で新しいトラブルが起きたりします。
 
 | No. | 演習 | 難易度 | 起きること |
 |---|---|---|---|
@@ -213,7 +217,7 @@ python -m http.server 8000
 jcl-terminal には、連携演習用のサンプル `LINKRPT`（データセットを排他で使う）と `LINKASK`（オペレーターに問い合わせる）があります。
 
 > [!NOTE]
-> 2つのタブが同じサイト（同じオリジン）にあるときだけつながります。公開ページ（`son-jo-sokora.github.io`）ならそのまま使えます。手元で使う場合は、2つのフォルダを同じ親フォルダに置き、その親フォルダでローカルサーバーを起動して（`python -m http.server 8000`）、`http://localhost:8000/mvs-ipl-sim/` を開いてください。ファイルをダブルクリックで開いた場合はつながりません。
+> 2つのタブが同じサイト（同じオリジン）にあるときだけつながります。公開ページ（`son-jo-sokora.github.io`）ならそのまま使えます。手元で使う場合は、2つのフォルダを同じ親フォルダに置き、その親フォルダでローカルサーバーを起動して（`python -m http.server 8000`）、`http://localhost:8000/mvs-console-sim/` を開いてください。ファイルをダブルクリックで開いた場合はつながりません。
 
 ---
 
@@ -289,8 +293,8 @@ IMSI（ロードパラメーター7桁目）が `C`・`P`・`S`・`.` のとき�
 | `tools/` | マニュアルからのエラー洗い出しと、`docs/` の一覧を作るスクリプト |
 | `docs/` | エラー一覧、エラー候補の全件、設計判断のログ |
 
-- **テストを流す**: GitHub Pages の [`tests/run.html`](https://son-jo-sokora.github.io/mvs-ipl-sim/tests/run.html)（またはローカルサーバー上の同じファイル）を開くと、エラーのテスト86件、連携のテスト18件（模擬端末が相手）、手順例16本、演習シナリオ17本の模範解答と誤答29件（採点が正しく減点するか）の、計166件を一度に実行して、成功・失敗を一覧にします。Node.js があれば `node tests/run-tests.js` でも実行できます。テストは、シミュレータが出しうる全メッセージ ID と待機状態コードが1回以上出ているか、すべてに解説と出典があるかも確かめます。
-- **本物の jcl-terminal との結合テスト**: [`tests/link-e2e.html`](https://son-jo-sokora.github.io/mvs-ipl-sim/tests/link-e2e.html) を開いて「実行する」を押すと、シミュレータと jcl-terminal を2つの枠で開き、連携のテスト18件と、連携演習4本・複合演習3本の模範解答を実際にやり取りさせて確かめます（数分かかります。連携モードのタブを別に開いていると乱れるので閉じてから）。
+- **テストを流す**: GitHub Pages の [`tests/run.html`](https://son-jo-sokora.github.io/mvs-console-sim/tests/run.html)（またはローカルサーバー上の同じファイル）を開くと、エラーのテスト86件、連携のテスト18件（模擬端末が相手）、手順例16本、演習シナリオ17本の模範解答と誤答29件（採点が正しく減点するか）の、計166件を一度に実行して、成功・失敗を一覧にします。Node.js があれば `node tests/run-tests.js` でも実行できます。テストは、シミュレータが出しうる全メッセージ ID と待機状態コードが1回以上出ているか、すべてに解説と出典があるかも確かめます。
+- **本物の jcl-terminal との結合テスト**: [`tests/link-e2e.html`](https://son-jo-sokora.github.io/mvs-console-sim/tests/link-e2e.html) を開いて「実行する」を押すと、シミュレータと jcl-terminal を2つの枠で開き、連携のテスト18件と、連携演習4本・複合演習3本の模範解答を実際にやり取りさせて確かめます（数分かかります。連携モードのタブを別に開いていると乱れるので閉じてから）。
 - **手順例を追加する**: `procedures.js` の配列に、`steps`（`LOAD` / `CMD` / `WAIT` / `NOTE`）を書いた手順を追加します。応答番号は `R #$HASP426#,WARM` のように `#メッセージID#` と書くと、実行時の番号に置き換わります。
 - **演習シナリオを追加する**: `scenarios.js` の配列に追加します。途中で起こす出来事は `triggers`（例: `{ after: 'reset', do: { scenario: 'DUPVOL', note: '…' } }` ＝システムリセットしたらボリューム重複を仕込み、連絡を表示）、採点は `checks` の関数で書きます。模範解答 `solution` で全項目 OK になることをテストが確かめます。
 - **エラー一覧を作り直す**: テストケースを変えたら `node tools/make_errors_md.js` で `docs/error-catalog.md` を作り直します。`tools/extract_errors.py` は z/OS 3.2 のマニュアル PDF をテキスト化したファイルが手元にある場合だけ使えます（使い方はファイル冒頭に記載）。
