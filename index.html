@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MVS IPL シミュレータ</title>
+<style>
+:root {
+  --bg: #11151a; --panel: #1a2027; --panel2: #222a33; --line: #2f3a46; --text: #d7dee6; --muted: #8b98a6;
+  --accent: #5fb3ff; --ok: #4cc38a; --warn: #f0b429; --bad: #ff6b6b;
+  --con-bg: #050805; --con-info: #4fe36b; --con-action: #ffffff; --con-wtor: #ffe066; --con-error: #ff7a7a;
+  --con-cmd: #7cc7ff; --con-sim: #9aa7b4; --con-hmc: #c9a2ff;
+  --mono: "Cascadia Mono", Consolas, "BIZ UDGothic", "MS Gothic", monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.5 "Yu Gothic UI", "Meiryo", system-ui, sans-serif; }
+header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font-size: 16px; margin: 0 12px 0 0; font-weight: 600; }
+.pill { font: 12px var(--mono); padding: 2px 8px; border-radius: 10px; background: var(--panel2); border: 1px solid var(--line); }
+.pill.ok { color: var(--ok); border-color: #2d6a4f; } .pill.bad { color: var(--bad); border-color: #7a2e2e; } .pill.warn { color: var(--warn); border-color: #7a5a12; }
+main { display: grid; grid-template-columns: 300px minmax(0, 1fr) 360px; gap: 12px; padding: 12px; height: calc(100vh - 52px); }
+section.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; overflow: auto; }
+h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); font-weight: 600; letter-spacing: .04em; }
+label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 2px; }
+input[type=text] { width: 100%; padding: 6px 8px; background: #0c1014; color: var(--text); border: 1px solid var(--line); border-radius: 4px; font: 14px var(--mono); text-transform: uppercase; }
+button { background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 6px 10px; cursor: pointer; font-size: 13px; }
+button:hover { border-color: var(--accent); }
+button.primary { background: #1d4e7a; border-color: #2c6aa3; }
+button.danger { background: #5a1f24; border-color: #8a2f36; }
+.row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.psw { font: 12px var(--mono); padding: 8px; background: #0c1014; border: 1px solid var(--line); border-radius: 4px; margin-top: 10px; min-height: 2.6em; word-break: break-all; }
+.psw.bad { color: var(--bad); border-color: #7a2e2e; }
+.scn { font-size: 12px; display: flex; gap: 6px; align-items: flex-start; margin: 3px 0; color: var(--text); }
+.scn input { margin-top: 3px; }
+.grp { font-size: 11px; color: var(--accent); margin-top: 8px; }
+#center { display: flex; flex-direction: column; min-height: 0; padding: 0; overflow: hidden; }
+#console { flex: 1; overflow: auto; background: var(--con-bg); font: 13px/1.45 var(--mono); padding: 10px 12px; white-space: pre-wrap; border-radius: 8px 8px 0 0; }
+#console .l { cursor: default; }
+#console .l.has { cursor: pointer; }
+#console .l.has:hover { background: #0f1d10; }
+.t { color: #3d6b45; margin-right: 8px; }
+.info { color: var(--con-info); } .action { color: var(--con-action); font-weight: 600; } .wtor { color: var(--con-wtor); font-weight: 600; }
+.error { color: var(--con-error); } .cmd { color: var(--con-cmd); } .sim { color: var(--con-sim); font-style: italic; } .hmc { color: var(--con-hmc); }
+#pending { background: #0a0f0a; border-top: 1px solid #1c3a1f; font: 12px var(--mono); color: var(--con-wtor); padding: 4px 12px; min-height: 22px; }
+#cmdbar { display: flex; gap: 6px; padding: 8px; background: var(--panel); border-top: 1px solid var(--line); }
+#cmdbar input { flex: 1; }
+.tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+.tabs button { flex: 1; font-size: 12px; }
+.tabs button.on { background: #1d4e7a; border-color: #2c6aa3; }
+.tab { display: none; } .tab.on { display: block; }
+.ref { font-size: 13px; }
+.ref .id { font: 600 15px var(--mono); color: var(--accent); }
+.ref .src { font-size: 11px; color: var(--muted); margin-top: 6px; }
+ol, ul { padding-left: 20px; margin: 6px 0; } li { margin: 3px 0; }
+code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-radius: 3px; color: #b5e3ff; }
+.chk { display: flex; gap: 8px; margin: 4px 0; } .chk .m { width: 1.2em; } .chk.ok .m { color: var(--ok); } .chk.ng .m { color: var(--bad); }
+.small { font-size: 12px; color: var(--muted); }
+@media (max-width: 1100px) { main { grid-template-columns: 1fr; height: auto; } #center { height: 70vh; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>MVS IPL / シャットダウン シミュレータ <span class="small">z/OS 3.2 ・ SYSA ・ JES2</span></h1>
+  <span class="pill" id="pPhase">システム: 停止</span>
+  <span class="pill" id="pJes">JES2: -</span>
+  <span class="pill" id="pVtam">VTAM: -</span>
+  <span class="pill" id="pTime">-</span>
+  <a href="procedures.html" style="color:var(--accent);font-size:13px;margin-left:auto">手順例を見る →</a>
+</header>
+<main>
+  <section class="card" id="left">
+    <h2>HMC（ハードウェア管理コンソール）</h2>
+    <label for="addr">ロードアドレス（SYSRES の装置番号）</label>
+    <input type="text" id="addr" value="0A80" maxlength="5" autocomplete="off">
+    <label for="lp">ロードパラメーター（8桁: IODF装置4 + LOADxx 2 + IMSI 1 + 核 1）</label>
+    <input type="text" id="lp" value="" maxlength="8" placeholder="例: 0A8200M1" autocomplete="off">
+    <div class="row">
+      <button class="primary" id="bLoad">LOAD</button>
+      <button class="danger" id="bReset">システムリセット</button>
+    </div>
+    <div class="psw" id="psw">PSW: -</div>
+
+    <h2 style="margin-top:16px">障害シナリオ（次の「最初から」で有効）</h2>
+    <div id="scn"></div>
+    <div class="row"><button id="bNew">この設定で最初から</button><button id="bRandom">ランダム</button></div>
+    <p class="small">チェックしたシナリオは、マシンの状態（前回の停止状態・接続されている装置など）として次の開始時に反映されます。</p>
+  </section>
+
+  <section class="card" id="center">
+    <div id="console" aria-live="polite"></div>
+    <div id="pending">応答待ち: なし</div>
+    <div id="cmdbar">
+      <input type="text" id="cmd" placeholder="コマンド（例: R 00,CLPA ／ D A,L ／ $PJES2）。NIP 中の Enter は空応答" autocomplete="off" spellcheck="false">
+      <button class="primary" id="bSend">送信</button>
+      <button id="bWait1" title="シミュレータ上の時間を1分進める">+1分</button>
+      <button id="bWait5" title="シミュレータ上の時間を5分進める">+5分</button>
+    </div>
+  </section>
+
+  <section class="card" id="right">
+    <div class="tabs">
+      <button data-t="tRef" class="on">解説</button>
+      <button data-t="tProc">手順書</button>
+      <button data-t="tCmd">コマンド</button>
+      <button data-t="tScore">採点</button>
+    </div>
+    <div class="tab on" id="tRef"><div class="ref" id="ref"><p class="small">コンソールのメッセージ行をクリックすると、マニュアルに基づく解説と出典ページを表示します。</p></div></div>
+    <div class="tab" id="tProc">
+      <div id="procGuide"></div>
+      <h2>IPL 手順（本番 SYSA）</h2>
+      <ol>
+        <li>HMC: ロードアドレス <code>0A80</code>、ロードパラメーター <code>0A8200M1</code>（IODF/IPLPARM は 0A82、LOAD00、メッセージ表示・プロンプトなし、標準核）</li>
+        <li>パラメーターを変える必要があるときは IMSI を <code>A</code>（両方プロンプト）にする: <code>0A8200A1</code></li>
+        <li>IEA347A → Enter（SYSCATLG）または <code>R 00,xx</code></li>
+        <li>IEA101A → Enter（IEASYS00）または <code>R 00,SYSP=01</code> など</li>
+        <li>JES2 の $HASP426 → <code>R nn,WARM</code>（通常）。$HASP400 が出たら <code>$S</code></li>
+        <li><code>S VTAM</code> → <code>S TCPIP</code> → <code>S TSO</code></li>
+      </ol>
+      <h2>停止手順</h2>
+      <ol>
+        <li><code>P TSO</code>（ユーザーが残っていれば IKT010D に SIC）</li>
+        <li><code>P TCPIP</code></li>
+        <li><code>Z NET</code>（VTAM 停止。急ぐ場合 <code>Z NET,QUICK</code>）</li>
+        <li><code>$P</code>（イニシエーター drain）→ <code>$DA</code> / <code>D A,L</code> で残りのジョブを確認。終了を待つか <code>C jobname</code></li>
+        <li><code>$P JES2</code>（$HASP607 が出たら $HASP608 の内容を片付けて再入力）</li>
+        <li><code>Z EOD</code>（IEE334I）</li>
+        <li><code>V XCF,SYSA,OFFLINE</code> → IXC371D に <code>R nn,SYSNAME=SYSA</code>（または HMC からシステムリセット）</li>
+      </ol>
+      <p class="small">出典: z/OS MVS System Commands p.2-7、JES2 Commands p.30-39。手順はこのシミュレータ環境用に簡略化した例です。</p>
+    </div>
+    <div class="tab" id="tCmd">
+      <h2>使えるコマンド</h2>
+      <ul class="small">
+        <li><code>R id,text</code> / <code>REPLY id,text</code> 応答（NIP 中は Enter で空応答）</li>
+        <li><code>D T</code> 時刻、<code>D A,L</code> 活動中ジョブ、<code>D R,L</code> 応答待ち一覧</li>
+        <li><code>S name</code>（JES2 / VTAM / TCPIP / TSO）、<code>S JES2,PARM='WARM,NOREQ'</code></li>
+        <li><code>P name</code>、<code>Z NET[,QUICK]</code>、<code>Z EOD</code></li>
+        <li><code>C name[,A=asid]</code>、<code>FORCE name[,ARM][,A=asid]</code></li>
+        <li><code>$S</code> <code>$P</code> <code>$DA</code> <code>$DU</code> <code>$D JES2</code> <code>$P JES2[,ABEND|,TERM|,ABEND,FORCE]</code></li>
+        <li><code>V XCF,SYSA,OFFLINE</code></li>
+        <li><code>WAIT n</code>（シミュレータ独自: n 分経過させる）</li>
+      </ul>
+      <p class="small">↑↓ キーでコマンド履歴。</p>
+    </div>
+    <div class="tab" id="tScore"><div id="score"></div><div class="row"><button id="bScore">採点を更新</button></div></div>
+  </section>
+</main>
+<script src="msgref.js"></script>
+<script src="engine.js"></script>
+<script src="procedures.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  let sim, hist = [], hi = 0;
+  const scnBox = $('scn');
+  let grp = '';
+  for (const [k, v] of Object.entries(MvsSim.SCENARIOS)) {
+    if (v.group !== grp) { grp = v.group; const g = document.createElement('div'); g.className = 'grp'; g.textContent = grp; scnBox.appendChild(g); }
+    const l = document.createElement('label'); l.className = 'scn';
+    l.innerHTML = '<input type="checkbox" value="' + k + '"><span>' + v.label + '</span>';
+    scnBox.appendChild(l);
+  }
+  const chosen = () => [...scnBox.querySelectorAll('input:checked')].map(i => i.value);
+
+  function esc(s) { return s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]); }
+  function addLine(r) {
+    const d = document.createElement('div');
+    d.className = 'l ' + r.cls + (r.msgid && MvsRef.MSG[r.msgid] ? ' has' : '');
+    d.innerHTML = '<span class="t">' + r.time + '</span>' + esc(r.text);
+    if (r.msgid) d.dataset.id = r.msgid;
+    const c = $('console'); c.appendChild(d); c.scrollTop = c.scrollHeight;
+    if (r.cls === 'wtor' || r.cls === 'action' || r.cls === 'error') { if (r.msgid && MvsRef.MSG[r.msgid]) showRef(r.msgid); }
+    refresh();
+  }
+  function showRef(id, isWait) {
+    const e = isWait ? MvsRef.WAIT[id] : MvsRef.MSG[id];
+    if (!e) return;
+    $('ref').innerHTML = '<div class="id">' + (isWait ? '待機状態コード ' : '') + esc(id) + '</div><p>' + esc(e[2]) + '</p><div class="src">出典: ' + esc(e[0]) + ' p.' + e[1] + '（PDF ページ）</div>';
+    switchTab('tRef');
+  }
+  function switchTab(t) {
+    document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
+    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.id === t));
+  }
+  document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { switchTab(b.dataset.t); if (b.dataset.t === 'tScore') score(); });
+  $('console').onclick = ev => { const l = ev.target.closest('.l'); if (l && l.dataset.id) showRef(l.dataset.id); };
+
+  function refresh() {
+    if (!sim) return;
+    const ph = { OFF: ['停止', ''], NIP: ['初期化中（NIP）', 'warn'], WAIT: ['無効待機状態', 'bad'], UP: ['稼働中', 'ok'], PARTITIONED: ['sysplex から切り離し済み', 'bad'] }[sim.phase];
+    $('pPhase').textContent = 'システム: ' + ph[0] + (sim.eod ? '（EOD 済）' : ''); $('pPhase').className = 'pill ' + ph[1];
+    const jm = { DOWN: ['停止', ''], INIT: ['初期化中', 'warn'], HOLD: ['$S 待ち', 'warn'], UP: [sim.jesDrain ? '稼働中（drain）' : '稼働中', 'ok'], TERMED: ['TERM 停止', 'bad'] }[sim.jes];
+    $('pJes').textContent = 'JES2: ' + jm[0]; $('pJes').className = 'pill ' + jm[1];
+    const vm = { DOWN: ['停止', ''], UP: ['稼働中', 'ok'], HALTING: ['停止待ち', 'warn'] }[sim.vtam];
+    $('pVtam').textContent = 'VTAM: ' + vm[0]; $('pVtam').className = 'pill ' + vm[1];
+    $('pTime').textContent = sim.ts();
+    const p = sim.pending();
+    $('pending').textContent = '応答待ち: ' + (p.length ? p.map(x => x.id + ' ' + x.msgid).join('  ／  ') : 'なし');
+    const psw = $('psw');
+    if (sim.psw) { psw.textContent = 'PSW: ' + sim.psw + '\n待機状態コード ' + sim.wait.code + (sim.wait.rr ? '  理由 ' + sim.wait.rr : '') + '（クリックで解説）'; psw.className = 'psw bad'; }
+    else { psw.textContent = 'PSW: ' + (sim.phase === 'OFF' ? '-' : '稼働中'); psw.className = 'psw'; }
+  }
+  $('psw').onclick = () => { if (sim && sim.wait) showRef(sim.wait.code, true); };
+
+  function fresh(scs) {
+    sim = new MvsSim({ scenarios: scs });
+    $('console').innerHTML = '';
+    sim.on(addLine);
+    addLine({ time: sim.ts(), text: '（シミュレータ）新しい環境を用意しました。シナリオ: ' + (scs.length ? scs.map(s => MvsSim.SCENARIOS[s].label).join(' / ') : 'なし（正常）'), cls: 'sim' });
+    addLine({ time: sim.ts(), text: '（シミュレータ）HMC でロードアドレスとロードパラメーターを入力して LOAD してください。手順は右の「手順書」タブ。', cls: 'sim' });
+    refresh();
+  }
+  function score() {
+    const r = sim.evaluate();
+    $('score').innerHTML = '<h2>操作の採点</h2>' + r.map(x => '<div class="chk ' + (x.ok ? 'ok' : 'ng') + '"><span class="m">' + (x.ok ? '✓' : '✗') + '</span><span>' + esc(x.item) + '</span></div>').join('') +
+      '<p class="small">停止手順の項目は $P JES2 または Z EOD を入力すると表示されます。</p>' +
+      (sim.hidden ? '<details><summary class="small">仕込まれた障害（答え）</summary><ul class="small">' + sim.hidden.map(k => '<li>' + esc(MvsSim.SCENARIOS[k].label) + '</li>').join('') + '</ul></details>' : '');
+  }
+  $('bScore').onclick = score;
+  $('bLoad').onclick = () => { sim.hmcLoad($('addr').value, $('lp').value); refresh(); if (sim.wait) showRef(sim.wait.code, true); $('cmd').focus(); };
+  $('bReset').onclick = () => { if (sim.phase === 'UP' && !sim.eod && !confirm('停止手順を行わずにシステムリセットします。よろしいですか？')) return; sim.hmcReset(); refresh(); };
+  $('bNew').onclick = () => fresh(chosen());
+  $('bRandom').onclick = () => {
+    const keys = Object.keys(MvsSim.SCENARIOS);
+    const s = new Set(), n = 1 + Math.floor(Math.random() * 3);
+    while (s.size < n) s.add(keys[Math.floor(Math.random() * keys.length)]);
+    sim = new MvsSim({ scenarios: [...s] }); sim.hidden = [...s];
+    $('console').innerHTML = ''; sim.on(addLine);
+    addLine({ time: sim.ts(), text: '（シミュレータ）ランダムな障害を ' + n + ' 個仕込みました（内容は「採点」タブで確認できます）。HMC から LOAD してください。', cls: 'sim' });
+    refresh();
+  };
+  function send() {
+    const v = $('cmd').value;
+    if (v.trim()) { hist.push(v); hi = hist.length; }
+    $('cmd').value = '';
+    sim.command(v); refresh();
+  }
+  $('bSend').onclick = send;
+  $('cmd').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); send(); }
+    else if (e.key === 'ArrowUp') { if (hi > 0) { hi--; $('cmd').value = hist[hi]; } e.preventDefault(); }
+    else if (e.key === 'ArrowDown') { if (hi < hist.length - 1) { hi++; $('cmd').value = hist[hi]; } else { hi = hist.length; $('cmd').value = ''; } e.preventDefault(); }
+  });
+  $('bWait1').onclick = () => { sim.advance(1); refresh(); };
+  $('bWait5').onclick = () => { sim.advance(5); refresh(); };
+
+  // 手順例ページの「シミュレータで試す」（index.html?proc=P03）
+  function startProc(id) {
+    const p = (window.MvsProcs ? MvsProcs.PROCS : []).find(x => x.id === id);
+    if (!p) return false;
+    const scs = p.scenarios || [];
+    scnBox.querySelectorAll('input').forEach(i => i.checked = scs.includes(i.value));
+    fresh(scs);
+    if (p.prep) {
+      addLine({ time: sim.ts(), text: '（シミュレータ）前提の状態まで自動で操作します: ' + (p.prepSay || ''), cls: 'sim' });
+      for (const st of p.prep) {
+        if (st.op === 'LOAD') sim.hmcLoad(st.addr, st.lp);
+        else if (st.op === 'CMD') sim.command(st.in.replace(/#([^#]+)#/g, (_, m) => { const x = sim.pending().find(q => q.msgid === m); return x ? x.id : '??'; }));
+      }
+      addLine({ time: sim.ts(), text: '（シミュレータ）ここから手順 ' + p.id + ' を始めてください（右の「手順書」タブ）', cls: 'sim' });
+    }
+    const firstLoad = p.steps.find(s => s.op === 'LOAD');
+    if (firstLoad) { $('addr').value = firstLoad.addr; $('lp').value = firstLoad.lp; }
+    const li = p.steps.map(s => {
+      let a = s.op === 'LOAD' ? 'HMC: ' + s.addr + ' / ' + s.lp + ' で LOAD' : s.op === 'CMD' ? (s.in === '' ? '（Enter のみ）' : s.in.replace(/#([^#]+)#/g, 'nn')) : s.op === 'WAIT' ? s.min + ' 分待つ（+1分/+5分 ボタン）' : s.op === 'NOTE' ? '確認・判断' : 'HMC: システムリセット';
+      return '<li><code>' + esc(a) + '</code>' + (s.say ? '<br><span class="small">' + esc(s.say) + '</span>' : '') + '</li>';
+    }).join('');
+    $('procGuide').innerHTML = '<h2>手順例 ' + p.id + '：' + esc(p.title) + '</h2><p class="small">' + esc(p.when) + '</p><ol>' + li + '</ol><p class="small">nn は表示された応答番号。<a href="procedures.html#' + p.id + '" style="color:var(--accent)">手順例ページで見る</a></p><hr style="border-color:var(--line)">';
+    switchTab('tProc');
+    refresh();
+    return true;
+  }
+  const q = new URLSearchParams(location.search).get('proc');
+  if (!(q && startProc(q))) fresh([]);
+})();
+</script>
+</body>
+</html>

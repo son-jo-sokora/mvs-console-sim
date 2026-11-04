@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IPL・停止 手順例</title>
+<style>
+:root {
+  --bg: #11151a; --panel: #1a2027; --panel2: #222a33; --line: #2f3a46; --text: #d7dee6; --muted: #8b98a6;
+  --accent: #5fb3ff; --ok: #4cc38a; --warn: #f0b429; --bad: #ff6b6b;
+  --con-bg: #050805; --con-info: #4fe36b; --con-action: #ffffff; --con-wtor: #ffe066; --con-error: #ff7a7a;
+  --con-cmd: #7cc7ff; --con-sim: #9aa7b4; --con-hmc: #c9a2ff;
+  --mono: "Cascadia Mono", Consolas, "BIZ UDGothic", "MS Gothic", monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.7 "Yu Gothic UI", "Meiryo", system-ui, sans-serif; }
+header { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+header a { color: var(--accent); font-size: 13px; }
+.wrap { display: grid; grid-template-columns: 270px minmax(0, 1fr); gap: 20px; max-width: 1280px; margin: 0 auto; padding: 16px; }
+nav { position: sticky; top: 64px; align-self: start; max-height: calc(100vh - 80px); overflow: auto; font-size: 13px; }
+nav .cat { color: var(--accent); font-weight: 600; margin: 14px 0 4px; }
+nav a { display: block; color: var(--text); text-decoration: none; padding: 3px 8px; border-radius: 4px; }
+nav a:hover { background: var(--panel2); }
+nav a .no { font-family: var(--mono); color: var(--muted); margin-right: 6px; }
+main { min-width: 0; }
+.intro, section.proc { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px 20px; margin-bottom: 20px; }
+.intro h2 { margin-top: 0; font-size: 18px; }
+section.proc h2 { margin: 0 0 4px; font-size: 18px; }
+section.proc h2 .no { font-family: var(--mono); color: var(--accent); margin-right: 8px; }
+.tag { display: inline-block; font-size: 11px; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--line); color: var(--muted); margin-right: 6px; }
+.when { color: var(--text); margin: 8px 0; }
+.label { font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: .04em; margin-top: 12px; }
+ul.points { margin: 4px 0 8px; padding-left: 20px; } ul.points li { margin: 2px 0; }
+.pre { font-size: 13px; color: var(--warn); }
+ol.steps { list-style: none; padding: 0; margin: 10px 0 0; counter-reset: s; }
+ol.steps > li { counter-increment: s; position: relative; padding: 10px 0 10px 40px; border-top: 1px dashed var(--line); }
+ol.steps > li::before { content: counter(s); position: absolute; left: 0; top: 10px; width: 26px; height: 26px; border-radius: 50%; background: #1d4e7a; color: #fff; font: 600 13px/26px var(--mono); text-align: center; }
+.act { font: 600 14px var(--mono); }
+.act .kind { font-family: inherit; font-weight: 400; font-size: 12px; color: var(--muted); margin-right: 8px; }
+.act code { color: #b5e3ff; background: #0c1014; padding: 2px 8px; border-radius: 4px; }
+.act.note { font: 600 13px inherit; color: var(--warn); }
+.say { margin: 4px 0; }
+pre.con { background: var(--con-bg); border: 1px solid #1c3a1f; border-radius: 6px; padding: 8px 10px; margin: 6px 0 0; font: 12.5px/1.45 var(--mono); white-space: pre-wrap; overflow-x: auto; }
+.info { color: var(--con-info); } .action { color: var(--con-action); font-weight: 600; } .wtor { color: var(--con-wtor); font-weight: 600; }
+.error { color: var(--con-error); } .cmd { color: var(--con-cmd); } .sim { color: var(--con-sim); font-style: italic; } .hmc { color: var(--con-hmc); }
+details.ex { margin-top: 6px; font-size: 13px; }
+details.ex summary { cursor: pointer; color: var(--muted); }
+details.ex dl { margin: 6px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; }
+details.ex dt { font-family: var(--mono); color: var(--accent); }
+details.ex dd { margin: 0; } details.ex dd .src { color: var(--muted); font-size: 11px; }
+.refs { font-size: 12px; color: var(--muted); margin-top: 12px; }
+.btn { display: inline-block; margin-top: 10px; padding: 6px 12px; border-radius: 5px; background: #1d4e7a; border: 1px solid #2c6aa3; color: #fff; text-decoration: none; font-size: 13px; }
+.btn:hover { border-color: var(--accent); }
+.flow { font-family: var(--mono); font-size: 13px; background: #0c1014; border-radius: 6px; padding: 10px 12px; overflow-x: auto; white-space: nowrap; }
+table.lp { border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+table.lp td, table.lp th { border: 1px solid var(--line); padding: 4px 10px; }
+table.lp th { background: var(--panel2); font-weight: 600; }
+.err { color: var(--bad); }
+@media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } nav { position: static; max-height: none; } }
+@media print { header, nav, .btn { display: none; } body { background: #fff; color: #000; } .wrap { display: block; } .intro, section.proc { border-color: #999; background: #fff; } pre.con { background: #f4f4f4; color: #000; border-color: #999; } .info,.action,.wtor,.error,.cmd,.sim,.hmc { color: #000; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>IPL・シャットダウン 手順例 <span style="font-size:12px;color:var(--muted)">z/OS 3.2 ・ SYSA ・ JES2</span></h1>
+  <a href="index.html">→ シミュレータを開く</a>
+</header>
+<div class="wrap">
+  <nav id="nav"></nav>
+  <main id="main">
+    <div class="intro">
+      <h2>この手順例について</h2>
+      <p>シミュレータの環境（システム SYSA、sysplex PLEX1、JES2）での IPL とシャットダウンの手順例です。各手順の「画面」は、このページを開いたときにシミュレータ本体で実際に操作を流して作っているので、シミュレータの表示と一致します。メッセージの意味と出典は各ステップの「メッセージの解説」を開くと見られます。</p>
+      <p>手順の右下の「シミュレータで試す」を押すと、同じ障害を仕込んだ状態でシミュレータが開きます（停止手順は IPL 済みの状態から始まります）。</p>
+      <div class="label">ロードパラメーターの読み方（例: 0A8200M1）</div>
+      <table class="lp">
+        <tr><th>桁</th><th>1〜4</th><th>5〜6</th><th>7</th><th>8</th></tr>
+        <tr><th>例</th><td><code>0A82</code></td><td><code>00</code></td><td><code>M</code></td><td><code>1</code></td></tr>
+        <tr><th>意味</th><td>IODF・SYS1.IPLPARM のある装置</td><td>LOADxx の xx</td><td>IMSI（メッセージ表示とプロンプト）</td><td>代替核 ID</td></tr>
+      </table>
+      <div class="label">IMSI の主な値（System Commands p.5）</div>
+      <table class="lp">
+        <tr><th>文字</th><th>情報メッセージ表示</th><th>マスターカタログを聞く</th><th>システムパラメーターを聞く</th></tr>
+        <tr><td>. ／空白</td><td>しない</td><td>しない</td><td>しない</td></tr>
+        <tr><td>M</td><td>する</td><td>しない</td><td>しない</td></tr>
+        <tr><td>A</td><td>する</td><td>聞く</td><td>聞く</td></tr>
+        <tr><td>C</td><td>しない</td><td>聞く</td><td>しない</td></tr>
+        <tr><td>D</td><td>する</td><td>聞く</td><td>しない</td></tr>
+        <tr><td>P / S / T</td><td colspan="3">P＝表示なし・両方聞く、S＝表示なし・パラメーターのみ聞く、T＝表示あり・パラメーターのみ聞く</td></tr>
+      </table>
+      <div class="label">起動と停止の順序</div>
+      <div class="flow">起動: LOAD → (NIP の応答) → IEE389I → JES2 ($HASP426 → WARM → $S) → VTAM → TCP/IP → TSO</div>
+      <div class="flow" style="margin-top:6px">停止: TSO → TCP/IP → VTAM (Z NET) → $P → ジョブ終了の確認 → $P JES2 → Z EOD → V XCF,SYSA,OFFLINE</div>
+    </div>
+    <div id="procs"></div>
+    <p class="refs">出典: z/OS 3.2 マニュアル（ローカルのコーパス）。ページは PDF のページ番号。手順はシミュレータ環境用の例で、実際の運用手順はサイトの運用手順書に従ってください。</p>
+  </main>
+</div>
+<script src="msgref.js"></script>
+<script src="engine.js"></script>
+<script src="procedures.js"></script>
+<script>
+(() => {
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const nav = document.getElementById('nav'), box = document.getElementById('procs');
+  let cat = '';
+  for (const p of MvsProcs.PROCS) {
+    if (p.cat !== cat) { cat = p.cat; nav.insertAdjacentHTML('beforeend', '<div class="cat">' + esc(cat) + '</div>'); }
+    nav.insertAdjacentHTML('beforeend', '<a href="#' + p.id + '"><span class="no">' + p.id + '</span>' + esc(p.title) + '</a>');
+    const r = MvsProcs.run(MvsSim, p);
+    let h = '<section class="proc" id="' + p.id + '">';
+    h += '<h2><span class="no">' + p.id + '</span>' + esc(p.title) + '</h2>';
+    h += '<span class="tag">' + esc(p.cat) + '</span>' + (p.scenarios || []).map(k => '<span class="tag">' + esc(MvsSim.SCENARIOS[k].label) + '</span>').join('');
+    h += '<p class="when"><b>状況：</b>' + esc(p.when) + '</p>';
+    if (p.prepSay) h += '<p class="pre">前提：' + esc(p.prepSay) + '</p>';
+    h += '<div class="label">要点</div><ul class="points">' + p.points.map(x => '<li>' + esc(x) + '</li>').join('') + '</ul>';
+    h += '<div class="label">手順</div><ol class="steps">';
+    for (const s of r.steps) {
+      const st = s.step;
+      h += '<li>';
+      if (st.op === 'LOAD') h += '<div class="act"><span class="kind">HMC</span>ロードアドレス <code>' + esc(st.addr) + '</code> ロードパラメーター <code>' + esc(st.lp) + '</code> で LOAD</div>';
+      else if (st.op === 'CMD') h += '<div class="act"><span class="kind">コンソール</span><code>' + (s.cmd === '' ? '（Enter のみ）' : esc(s.cmd)) + '</code></div>';
+      else if (st.op === 'WAIT') h += '<div class="act"><span class="kind">待つ</span>' + st.min + ' 分</div>';
+      else if (st.op === 'RESET') h += '<div class="act"><span class="kind">HMC</span>システムリセット</div>';
+      else if (st.op === 'NOTE') h += '<div class="act note">確認・判断</div>';
+      if (st.say) h += '<div class="say">' + esc(st.say) + '</div>';
+      if (s.errs.length) h += '<div class="err">（手順データの誤り: 応答待ちの ' + esc(s.errs.join(',')) + ' がありません）</div>';
+      const out = s.out.filter(o => !(o.cls === 'cmd' && o.text === s.cmd));
+      if (out.length) {
+        h += '<pre class="con">' + out.map(o => '<span class="' + o.cls + '">' + esc(o.text) + '</span>').join('\n') + '</pre>';
+        const ids = [...new Set(out.filter(o => o.msgid && MvsRef.MSG[o.msgid]).map(o => o.msgid))];
+        const w = out.map(o => /待機状態コード ([0-9A-F]{3})/.exec(o.text)).filter(Boolean).map(m => m[1]);
+        if (ids.length || w.length) {
+          h += '<details class="ex"><summary>メッセージの解説（' + (ids.length + w.length) + '）</summary><dl>';
+          for (const id of ids) { const e = MvsRef.MSG[id]; h += '<dt>' + esc(id) + '</dt><dd>' + esc(e[2]) + ' <span class="src">' + esc(e[0]) + ' p.' + e[1] + '</span></dd>'; }
+          for (const c of w) { const e = MvsRef.WAIT[c]; if (e) h += '<dt>待機 ' + c + '</dt><dd>' + esc(e[2]) + ' <span class="src">' + esc(e[0]) + ' p.' + e[1] + '</span></dd>'; }
+          h += '</dl></details>';
+        }
+      }
+      h += '</li>';
+    }
+    h += '</ol>';
+    h += '<div class="refs">参照: ' + p.refs.map(esc).join(' ／ ') + '</div>';
+    h += '<a class="btn" href="index.html?proc=' + p.id + '">シミュレータで試す</a>';
+    h += '</section>';
+    box.insertAdjacentHTML('beforeend', h);
+  }
+})();
+</script>
+</body>
+</html>

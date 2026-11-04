@@ -1,0 +1,19 @@
+# OS が自動で作るファイル
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# エディタの設定・一時ファイル
+.vscode/
+.idea/
+*.swp
+*~
+
+# ローカル用の設定
+.claude/
+
+# マニュアルから抽出した中間データ（tools/extract_errors.py の出力。docs/error-candidates.md の元）
+tools/errors_raw.json
+
+# テストの実行結果（node tests/run-tests.js の出力を保存したもの）
+tests/last-run.txt
