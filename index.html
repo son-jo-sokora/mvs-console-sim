@@ -41,6 +41,17 @@ button.danger { background: #5a1f24; border-color: #8a2f36; }
 .t { color: #3d6b45; margin-right: 8px; }
 .info { color: var(--con-info); } .action { color: var(--con-action); font-weight: 600; } .wtor { color: var(--con-wtor); font-weight: 600; }
 .error { color: var(--con-error); } .cmd { color: var(--con-cmd); } .sim { color: var(--con-sim); font-style: italic; } .hmc { color: var(--con-hmc); }
+#ctabs { display: flex; gap: 4px; padding: 6px 8px 0; background: var(--panel); border-radius: 8px 8px 0 0; }
+#ctabs button { font-size: 12px; border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+#ctabs button.on { background: var(--con-bg); border-color: #1c3a1f; color: var(--con-info); }
+#syslogView { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--con-bg); }
+#syslogView[hidden] { display: none; }
+.logbar { display: flex; gap: 6px; padding: 8px; align-items: center; border-bottom: 1px solid #1c3a1f; }
+.logbar input { flex: 1; text-transform: uppercase; }
+#logOut { flex: 1; margin: 0; overflow: auto; padding: 8px 12px; font: 12px/1.45 var(--mono); color: var(--con-info); white-space: pre; }
+#logOut mark { background: #3a3f1d; color: #fff; }
+.diag label { display: flex; gap: 6px; align-items: flex-start; font-size: 13px; color: var(--text); margin: 4px 0; }
+.diag input[type=radio] { margin-top: 4px; }
 #pending { background: #0a0f0a; border-top: 1px solid #1c3a1f; font: 12px var(--mono); color: var(--con-wtor); padding: 4px 12px; min-height: 22px; }
 #cmdbar { display: flex; gap: 6px; padding: 8px; background: var(--panel); border-top: 1px solid var(--line); }
 #cmdbar input { flex: 1; }
@@ -91,6 +102,11 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
   </section>
 
   <section class="card" id="center">
+    <div id="ctabs"><button data-v="con" class="on">コンソール</button><button data-v="log">SYSLOG</button></div>
+    <div id="syslogView" hidden>
+      <div class="logbar"><input type="text" id="logq" placeholder="検索（メッセージ ID・ジョブ名・文字列）" autocomplete="off" spellcheck="false"><button id="logGo">検索</button><button id="logAll">全件</button><span class="small" id="logCount"></span></div>
+      <pre id="logOut"></pre>
+    </div>
     <div id="console" aria-live="polite"></div>
     <div id="pending">応答待ち: なし</div>
     <div id="cmdbar">
@@ -209,7 +225,7 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
 
   let exCtx = null; // 演習シナリオの挑戦中なら {x, ctx}
   function fresh(scs) {
-    exCtx = null; $('procGuide').innerHTML = '';
+    exCtx = null; $('procGuide').innerHTML = ''; if (typeof showView === 'function' && $('syslogView')) showView('con');
     sim = new MvsSim({ scenarios: scs });
     attachLink();
     $('console').innerHTML = '';
@@ -227,7 +243,7 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
         g.map(x => '<div class="chk ' + (x.ok ? 'ok' : 'ng') + '"><span class="m">' + (x.ok ? '✓' : '✗') + '</span><span>' + esc(x.item) + '</span></div>').join('') +
         '<p class="small"><a href="scenarios.html#' + exCtx.x.id + '" target="_blank" style="color:var(--accent)">解答と解説を見る</a></p><hr style="border-color:var(--line)">';
     }
-    const r = sim.evaluate();
+    const r = sim.evaluate(exCtx ? exCtx.ctx.evFrom : 0);
     $('score').innerHTML = exHtml + '<h2>操作の採点</h2>' + r.map(x => '<div class="chk ' + (x.ok ? 'ok' : 'ng') + '"><span class="m">' + (x.ok ? '✓' : '✗') + '</span><span>' + esc(x.item) + '</span></div>').join('') +
       '<p class="small">停止手順の項目は $P JES2 または Z EOD を入力すると表示されます。</p>' +
       (sim.hidden ? '<details><summary class="small">仕込まれた障害（答え）</summary><ul class="small">' + sim.hidden.map(k => '<li>' + esc(MvsSim.SCENARIOS[k].label) + '</li>').join('') + '</ul></details>' : '');
@@ -298,9 +314,12 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
     if (x.link && !chan) linkOn();
     attachLink();
     $('console').innerHTML = '';
+    showView('con');
     addLine({ time: '', text: '（シミュレータ）演習 ' + x.id + '「' + x.title + '」を開始します。' + (x.prepSay ? '開始時の状態: ' + x.prepSay : 'システムは停止しています。'), cls: 'sim' });
-    sim.out.forEach(addLine);
+    // 前のシフトの出来事はコンソールには出さない（SYSLOG タブで調べる）
+    sim.out.slice(ctx.historyEnd || 0).forEach(addLine);
     sim.on(addLine);
+    if (x.history) addLine({ time: sim.ts(), text: '（シミュレータ）あなたは今、コンソールの前に着いたところです。夜のあいだの出来事は、コンソールの上の「SYSLOG」タブで調べられます。', cls: 'sim' });
     addLine({ time: sim.ts(), text: '（シミュレータ）ここから挑戦してください。作業指示書は右の「手順書」タブ、終わったら「採点」タブで確認します。', cls: 'sim' });
     $('addr').value = '0A80'; $('lp').value = '';
     const li = a => a.map(m => '<li>' + esc(m) + '</li>').join('');
@@ -309,13 +328,43 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
       '<p>' + esc(x.story) + '</p>' +
       '<h2>連絡事項</h2><ul class="small">' + li(x.handoff) + '</ul>' +
       '<h2>作業指示書</h2><ol>' + li(x.order) + '</ol>' +
-      '<h2>完了条件</h2><p class="small">' + esc(x.goal) + '</p>' +
+      (x.goal ? '<h2>完了条件</h2><p class="small">' + esc(x.goal) + '</p>' : '') +
+      (x.diagnosis ? '<h2>診断の報告</h2><div class="diag"><p class="small">' + esc(x.diagnosis.question) + '</p>' +
+        x.diagnosis.choices.map(c => '<label><input type="radio" name="dg" value="' + c.id + '"><span><b>' + c.id + '</b> ' + esc(c.text) + '</span></label>').join('') +
+        '<label class="small" style="display:block;margin-top:6px">根拠のメッセージ ID（SYSLOG で見つけたもの。例: IEE301I）</label><input type="text" id="dgEv" autocomplete="off">' +
+        '<div class="row"><button class="primary" id="dgGo">報告する</button></div><p class="small" id="dgMsg"></p></div>' : '') +
       (x.link ? '<p class="small" style="color:var(--warn)">この演習は jcl-terminal と一緒に使います。画面上の「jcl-terminal を開く」で別タブに開き、「利用者役」の操作（SUB）はそちらで行ってください。</p>' : '') +
       '<p class="small">途中で「（連絡）」が届くことがあります。ロードパラメーターは自分で入力してください。</p><hr style="border-color:var(--line)">';
+    if (x.diagnosis) $('dgGo').onclick = () => {
+      const c = (document.querySelector('input[name=dg]:checked') || {}).value, ev = $('dgEv').value.trim().toUpperCase();
+      if (!c) { $('dgMsg').textContent = '原因を1つ選んでください。'; return; }
+      sim.reportDiagnosis(c, ev);
+      $('dgMsg').textContent = '報告しました（原因 ' + c + (ev ? '、根拠 ' + ev : '、根拠の記入なし') + '）。報告は何度でも出し直せます（最後の報告を採点）。結果は「採点」タブで。';
+    };
     switchTab('tProc');
     refresh();
     return true;
   }
+
+  // ---- SYSLOG タブ（SYSLOG・ハードコピーログの表示と検索） ----
+  function showView(v) {
+    document.querySelectorAll('#ctabs button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+    $('syslogView').hidden = v !== 'log';
+    $('console').style.display = v === 'log' ? 'none' : '';
+    if (v === 'log') showLog($('logq').value);
+  }
+  function showLog(q) {
+    const lines = sim.viewSyslog(q);
+    const qq = (q || '').trim().toUpperCase();
+    $('logOut').innerHTML = lines.map(l => { const e = esc(l); return qq ? e.split(esc(qq)).join('<mark>' + esc(qq) + '</mark>') : e; }).join('\n') || '（該当する記録はありません）';
+    $('logCount').textContent = lines.length + ' 行';
+    $('logOut').scrollTop = qq ? 0 : $('logOut').scrollHeight;
+  }
+  document.querySelectorAll('#ctabs button').forEach(b => b.onclick = () => showView(b.dataset.v));
+  $('logGo').onclick = () => showLog($('logq').value);
+  $('logAll').onclick = () => { $('logq').value = ''; showLog(''); };
+  $('logq').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); showLog($('logq').value); } });
+
   // ---- jcl-terminal との連携モード（同じサイトの別タブと BroadcastChannel でやり取り） ----
   let chan = null, termSeen = 0;
   function attachLink() { if (chan && sim) sim.setLink(m => chan.postMessage(m)); }

@@ -19,6 +19,13 @@
     { id: 'XL3-W2', ex: 'XL3', title: '問い合わせに答えず LINKASK を取り消す', mutate: [['R #OPR001A#,NO', [C('C LINKASK')]]], fail: ['NO と応答した', 'CC 0004'] },
     { id: 'XL4-W1', ex: 'XL4', title: '再起動後に COLD で JES2 を起動', mutate: [['R #$HASP426#,WARM', [C('R #$HASP426#,COLD'), C('R #$HASP441#,Y')]]], fail: ['ウォームスタート', '$DJ で確かめて', 'HOLDJOB が CC 0000'] },
     { id: 'XL4-W2', ex: 'XL4', title: '停止前に解放してしまう', mutate: [['P TSO', [C("$AJ'HOLDJOB'"), C('P TSO')]]], fail: ['再起動の前には解放していない', '$DJ で確かめて'] },
+    { id: 'XS1-W1', ex: 'XS1', title: '原因を VTAM と診断（根拠も違う）', mutate: [['DIAG', [{ op: 'DIAG', cause: 'A', evidence: 'IST020I' }]]], fail: ['原因の診断', '根拠のメッセージ'] },
+    { id: 'XS1-W2', ex: 'XS1', title: 'SYSLOG を見ずに S TSO', mutate: [['LOG', []], ['LOG', []], ['LOG', []]], fail: ['SYSLOG を調べた', 'SYSLOG を調べてから'] },
+    { id: 'XS2-W1', ex: 'XS2', title: '待っている NIGHTRPT を取り消す', mutate: [['C SALESUPD', [C('C NIGHTRPT')]]], fail: ['原因の SALESUPD を取り消し', 'NIGHTRPT が RC=0000'] },
+    { id: 'XS3-W1', ex: 'XS3', title: 'COLD で JES2 を起動（スプールが消える）', mutate: [['R #$HASP426#,WARM', [C('R #$HASP426#,COLD'), C('R #$HASP441#,Y')]], ['R #$HASP454#,Y', []]], fail: ['スプールを残した', '$HASP454 に Y'] },
+    { id: 'XS4-W1', ex: 'XS4', title: '根拠に $HASP000 を挙げる', mutate: [['DIAG', [{ op: 'DIAG', cause: 'A', evidence: '$HASP000' }]]], fail: ['根拠のメッセージ'] },
+    { id: 'XS5-W1', ex: 'XS5', title: '「オペレーターが取り消した」と診断', mutate: [['DIAG', [{ op: 'DIAG', cause: 'A', evidence: 'IEE301I' }]]], fail: ['原因の診断', '根拠のメッセージ'] },
+    { id: 'XS5-W2', ex: 'XS5', title: '診断の後に、余計な IPL をする', mutate: [['DIAG', [{ op: 'DIAG', cause: 'B', evidence: 'CSV003I' }, C('$P'), C('$PJES2')]]], fail: ['操作をしていない'] },
     { id: 'X5-W1', ex: 'X5', title: '初回なのに WARM で始めて遠回り', mutate: [['R #$HASP426#,COLD', [C('R #$HASP426#,WARM'), C('R #$HASP454#,Y'), C('R #$HASP272#,TERM'), C('S JES2'), C('R #$HASP426#,COLD')]]], fail: ['遠回り'] },
   ];
   if (typeof module !== 'undefined' && module.exports) module.exports = CASES; else root.MvsExerciseCases = CASES;

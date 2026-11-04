@@ -366,14 +366,166 @@
     },
   );
 
+  // ======================= SYSLOG 調査演習（前のシフトの記録から原因を推定する） =======================
+  // history: 挑戦の前にシミュレータで実際に流す「前のシフトの出来事」。結果は SYSLOG にだけ残り、コンソールには出さない。
+  // diagnosis: 報告欄の問い（choices の id が答え）と、根拠として認めるメッセージ ID。
+  const C = s => ({ op: 'CMD', in: s }), W = m => ({ op: 'WAIT', min: m }), J = job => ({ op: 'JOBIN', job });
+  const NIGHT = '2026-11-04T21:00:00';
+  const HUP = UPALL.concat([W(1)]);
+  const diagIs = (ev, id) => { const d = ev.filter(e => e.type === 'diag').pop(); return !!d && d.detail.split('|')[0] === id; };
+  const evidenceIn = (ev, ids) => { const d = ev.filter(e => e.type === 'diag').pop(); if (!d) return false; const t = d.detail.split('|')[1] || ''; return ids.some(i => t.includes(i)); };
+  const lookedFirst = (ev, type, pre) => { const v = idx(ev, 'syslog-view'), a = idx(ev, type, pre); return v >= 0 && a > v; };
+  const noHarm = ev => !has(ev, 'reset') && !has(ev, 'load') && !has(ev, 'eod') && !has(ev, 'pjes2') && !has(ev, 'znet');
+  const LOOKED = { item: 'SYSLOG を調べた', fn: (s, ev) => has(ev, 'syslog-view') };
+  const DIAG = (id, label) => ({ item: '原因の診断が正しい（' + label + '）', fn: (s, ev) => diagIs(ev, id) });
+  const EVID = (ids) => ({ item: '根拠のメッセージを示した（' + ids.join(' / ') + ' のどれか）', fn: (s, ev) => evidenceIn(ev, ids) });
+  const ended = (ev, name, how) => ev.some(e => e.type === 'job-end' && e.detail === name + ' ' + how);
+  X.push(
+    {
+      id: 'XS1', syslog: true, title: '朝、利用者が TSO にログオンできない',
+      level: '初級', time: '10分', clock: NIGHT,
+      story: '朝 7 時、日勤のオペレーターとして交代しました。利用者から「TSO にログオンできない」と電話がありました。夜勤者は帰宅していて、引き継ぎ簿には「特記事項なし」とだけあります。',
+      handoff: ['利用者: 昨日の夕方までは普通にログオンできていた。', '引き継ぎ簿（夜勤）: 特記事項なし。'],
+      order: ['SYSLOG で、夜のあいだに何があったかを調べる。', '原因と、その根拠になったメッセージを「診断の報告」に記入する。', '利用者がログオンできる状態に戻す（必要以上の操作はしない）。'],
+      history: HUP.concat([J({ name: 'DAILYBK', remain: 25 }), W(30), C('D A,L'), W(60), C('P TSO'), J({ name: 'NIGHTSUM', remain: 15 }), W(20), W(488)]),
+      prepSay: '前夜 21 時から朝までの記録が SYSLOG に残っている。',
+      diagnosis: { question: '利用者が TSO にログオンできない原因は？', answer: 'B', evidence: ['IKT006I'],
+        choices: [{ id: 'A', text: 'VTAM が停止している' }, { id: 'B', text: '夜間に TSO（TCAS）が停止され、起動し直されていない' }, { id: 'C', text: 'JES2 が停止している' }, { id: 'D', text: 'SYSA が sysplex から外れている' }] },
+      checks: [
+        LOOKED, DIAG('B', 'TSO が夜間に停止されたまま'), EVID(['IKT006I']),
+        { item: 'SYSLOG を調べてから TSO を起動した', fn: (s, ev) => lookedFirst(ev, 'started', 'TSO') },
+        { item: 'TSO が動いている', fn: s => s.phase === 'UP' && s.jobs.some(j => j.name === 'TSO') },
+        { item: '余計な操作（IPL・停止など）をしていない', fn: (s, ev) => noHarm(ev) },
+      ],
+      solution: [
+        { op: 'LOG', find: 'TSO', say: 'SYSLOG を「TSO」で検索。22 時半ごろに MSTCON（コンソール）から P TSO が入力され、$HASP395 TSO ENDED が出ている。その後 S TSO は入力されていない。' },
+        { op: 'LOG', find: 'IKT', say: 'TSO/VTAM のメッセージ（IKT）を検索。21 時に IKT007I（ログオン受付開始）、22 時半に IKT006I TCAS ENDED。' },
+        { op: 'LOG', find: 'IST', say: '念のため VTAM（IST）も確認。IST020I の後に停止のメッセージはなく、VTAM は動いている。' },
+        { op: 'DIAG', cause: 'B', evidence: 'IKT006I', say: '原因は B、根拠は IKT006I（と P TSO のコマンド）。' },
+        { op: 'CMD', in: 'S TSO', say: 'TSO を起動。IKT007I でログオン受付が始まる。' },
+        { op: 'CMD', in: 'D A,L' },
+      ],
+      points: ['「ログオンできない」の原因は、VTAM・TSO・JES2・システムのどれが止まっているかで切り分ける。', 'SYSLOG にはコマンドも残る（種別 NC、コンソール名つき）。誰がいつ何をしたかが分かる。', '引き継ぎ簿に書かれていなくても、SYSLOG には残っている。'],
+      mistakes: [['原因を調べずに IPL し直す', '時間がかかり、夜間に動いていたジョブにも影響する。原因（P TSO）は分からないまま。'], ['S VTAM を入れる', 'VTAM は動いているので何も解決しない。']],
+    },
+    {
+      id: 'XS2', syslog: true, title: '夜間レポートが出ていない',
+      level: '中級', time: '15分', clock: NIGHT,
+      story: '朝 7 時、売上担当から「夜間に流れるはずのレポート NIGHTRPT が出ていない」と連絡がありました。',
+      handoff: ['売上担当: NIGHTRPT の結果を朝一番の会議で使いたい。', '売上担当: 売上更新の SALESUPD は普段 30 分ほどで終わる。長引いているなら取り消してよい（日中に再実行する）。', '引き継ぎ簿（夜勤）: 特記事項なし。'],
+      order: ['SYSLOG で、NIGHTRPT に何が起きているかを調べる。', '原因と根拠のメッセージを「診断の報告」に記入する。', '売上担当の了解の範囲で対応し、NIGHTRPT を完了させる。'],
+      history: HUP.concat([W(60), J({ name: 'SALESUPD', remain: 900, dsns: [{ dsn: 'USER01.SALES.DATA', excl: true }] }), W(120), J({ name: 'DAILYBK', remain: 20 }), W(25), J({ name: 'NIGHTRPT', remain: 10, dsns: [{ dsn: 'USER01.SALES.DATA', excl: false }] }), W(392)]),
+      prepSay: '前夜 21 時から朝までの記録が SYSLOG に残っている。',
+      diagnosis: { question: 'NIGHTRPT が終わっていない原因は？', answer: 'B', evidence: ['IEF099I', 'IEF863I', 'IEF861I'],
+        choices: [{ id: 'A', text: 'NIGHTRPT の JCL エラー' }, { id: 'B', text: 'NIGHTRPT がデータセット待ち（SALESUPD が USER01.SALES.DATA を使ったまま終わっていない）' }, { id: 'C', text: 'イニシエーターが $P で休止している' }, { id: 'D', text: 'NIGHTRPT がオペレーターに取り消された' }] },
+      checks: [
+        LOOKED, DIAG('B', 'データセット待ち'), EVID(['IEF099I', 'IEF863I', 'IEF861I']),
+        { item: 'SYSLOG を調べてから取り消した', fn: (s, ev) => lookedFirst(ev, 'cancel') },
+        { item: '原因の SALESUPD を取り消し、NIGHTRPT は取り消していない', fn: (s, ev) => has(ev, 'cancel', 'SALESUPD') && !has(ev, 'cancel', 'NIGHTRPT') },
+        { item: 'NIGHTRPT が RC=0000 で終わった', fn: (s, ev) => ended(ev, 'NIGHTRPT', 'RC=0000') },
+      ],
+      solution: [
+        { op: 'LOG', find: 'NIGHTRPT', say: 'NIGHTRPT は 0 時前に $HASP373 で始まったが、IEF861I・IEF863I・IEF099I が出て、その後 $HASP395 がない。' },
+        { op: 'LOG', find: 'USER01.SALES.DATA', say: 'IEF863I のデータセットは USER01.SALES.DATA。' },
+        { op: 'LOG', find: 'SALESUPD', say: 'SALESUPD は 22 時に始まり、まだ終わっていない（$HASP395 がない）。普段は 30 分のジョブ。' },
+        { op: 'DIAG', cause: 'B', evidence: 'IEF863I', say: '原因は B、根拠は IEF863I（と IEF099I）。' },
+        { op: 'CMD', in: 'C SALESUPD', say: '売上担当の了解どおり SALESUPD を取り消す。データセットが空き、NIGHTRPT が先へ進む。' },
+        { op: 'WAIT', min: 10, say: 'NIGHTRPT が RC=0000 で終わる。' },
+      ],
+      points: ['IEF099I は時間切れにならない。だれかが原因を取り除くまで、朝まででも待ち続ける。', 'IEF863I のデータセット名で SYSLOG を検索すると、それを使っているジョブ（終わっていないジョブ）が見つかる。'],
+      mistakes: [['NIGHTRPT を取り消して流し直す', '流し直しても SALESUPD が残っている限り、また待つ。'], ['SALESUPD の了解を取らずに取り消す', '業務への影響を確認していない。この演習では了解が連絡事項にある。']],
+    },
+    {
+      id: 'XS3', syslog: true, title: '夜間の IPL の後、ジョブが一切動かない',
+      level: '中級', time: '15分', clock: NIGHT,
+      story: '朝 7 時に交代すると、夜勤者のメモに「3 時半ごろ SYSA が応答しなくなったので、リセットして IPL した」とありました。業務担当から「朝のジョブが一つも動かない」と連絡がありました。',
+      handoff: ['夜勤者のメモ: 3 時半ごろ SYSA が応答しなくなったので、HMC でリセットして IPL した。', '運用責任者: スプールに夜間のジョブと出力が残っているので、消さないこと。'],
+      order: ['SYSLOG で、IPL のときに何があったかを調べる。', '原因と根拠のメッセージを「診断の報告」に記入する。', 'スプールを残したまま業務開始状態（JES2・VTAM・TCP/IP・TSO）にする。'],
+      history: HUP.concat([J({ name: 'DAILYBK', remain: 20 }), W(390), { op: 'RESET' }, { op: 'LOAD', addr: '0A80', lp: '0A8200M1' }, C('R #$HASP426#,WARM'), C('R #$HASP454#,N'), W(210)]),
+      prepSay: '前夜からの記録と、3 時半ごろのリセット・IPL の記録が SYSLOG に残っている。',
+      diagnosis: { question: 'ジョブが動かない原因は？', answer: 'A', evidence: ['$HASP454', '$HASP428', '$HASP479', '$HASP085'],
+        choices: [{ id: 'A', text: 'JES2 の起動時に、チェックポイントのロックの確認（$HASP454）に N と答えられ、JES2 が終了している' }, { id: 'B', text: 'JES2 は動いているが、$P で休止している' }, { id: 'C', text: 'スプールが壊れていて、コールドスタートが必要' }, { id: 'D', text: 'IPL が途中で止まっている（待機状態）' }] },
+      checks: [
+        LOOKED, DIAG('A', '$HASP454 に N で JES2 が終了'), EVID(['$HASP454', '$HASP428', '$HASP479', '$HASP085']),
+        { item: 'SYSLOG を調べてから JES2 を起動した', fn: (s, ev) => lookedFirst(ev, 'jes-start') },
+        { item: 'スプールを残した（WARM。COLD にしていない）', fn: (s, ev) => has(ev, 'jes-start', 'WARM') && !has(ev, 'jes-start', 'COLD') },
+        { item: '$HASP454 に Y（ロックを持つのは落ちた SYSA 自身）', fn: (s, ev) => has(ev, 'jes-steal-lock') },
+        { item: '業務開始状態（JES2・VTAM・TCP/IP・TSO が稼働）', fn: s => allUp(s) },
+      ],
+      solution: [
+        { op: 'LOG', find: '$HASP4', say: 'IPL の後、$HASP426 に WARM、続いて $HASP479 UNABLE TO OBTAIN CKPT DATA SET LOCK - MEMBER=SYSA と $HASP454 が出て、N と応答されている。その結果 $HASP428 と $HASP085 で JES2 が終了。' },
+        { op: 'LOG', find: 'HMC', say: '（HMC の操作は SYSLOG には残らない。リセットの前は 3 時半ごろまで普通にメッセージが出ていて、その後に IPL の記録が続く。）' },
+        { op: 'DIAG', cause: 'A', evidence: '$HASP454', say: '原因は A、根拠は $HASP454 への N と $HASP428。' },
+        { op: 'CMD', in: 'S JES2' },
+        { op: 'CMD', in: 'R #$HASP426#,WARM', say: 'スプールを残すので WARM。' },
+        { op: 'CMD', in: 'R #$HASP454#,Y', say: 'ロックを持つのは、リセットされた SYSA 自身（他のメンバーはない）なので Y。' },
+        { op: 'CMD', in: '$S' }, C('S VTAM'), C('S TCPIP'), C('S TSO'),
+      ],
+      points: ['システムが落ちた後の IPL では、JES2 がロックの確認を求めてくる。ロックの持ち主（MEMBER=）が落ちた本人なら Y。', 'JES2 が動いていないと VTAM・TSO も起動できない。「何も動かない」ときは JES2 を最初に疑う。'],
+      mistakes: [['COLD で JES2 を起動', 'スプール上の夜間のジョブと出力がすべて消える。運用責任者の指示に反する。'], ['もう一度 IPL する', '同じ質問がまた出るだけ。原因（N と答えたこと）を理解していないと繰り返す。']],
+    },
+    {
+      id: 'XS4', syslog: true, title: '投入されたジョブが始まらない',
+      level: '初級〜中級', time: '10分', clock: NIGHT,
+      story: '朝 7 時、業務担当から「夜間に投入された NIGHTJOB がまだ始まっていない」と連絡がありました。システムは動いていて、ほかに異常の連絡はありません。',
+      handoff: ['業務担当: NIGHTJOB は 23 時ごろ自動投入されるジョブ。', '引き継ぎ簿（夜勤）: 計画停止の準備をしかけたが、停止は中止になった。'],
+      order: ['SYSLOG で、NIGHTJOB が始まらない理由を調べる。', '原因と根拠のメッセージを「診断の報告」に記入する。', 'NIGHTJOB を実行させ、終わるのを確認する。'],
+      history: HUP.concat([W(90), C('$P'), C('D A,L'), W(40), J({ name: 'NIGHTJOB', remain: 5 }), W(470)]),
+      prepSay: '前夜 21 時から朝までの記録が SYSLOG に残っている。',
+      diagnosis: { question: 'NIGHTJOB が始まらない原因は？', answer: 'A', evidence: ['$HASP099'],
+        choices: [{ id: 'A', text: '停止の準備で入力された $P のまま、JES2 のイニシエーターが休止している' }, { id: 'B', text: 'NIGHTJOB の JCL エラー' }, { id: 'C', text: 'NIGHTJOB がデータセット待ち' }, { id: 'D', text: 'JES2 が停止している' }] },
+      checks: [
+        LOOKED, DIAG('A', '$P のまま休止'), EVID(['$HASP099']),
+        { item: 'SYSLOG を調べてから $S を入力した', fn: (s, ev) => lookedFirst(ev, 'jes-$S') },
+        { item: 'NIGHTJOB が RC=0000 で終わった', fn: (s, ev) => ended(ev, 'NIGHTJOB', 'RC=0000') },
+        { item: '余計な操作（IPL・停止など）をしていない', fn: (s, ev) => noHarm(ev) },
+      ],
+      solution: [
+        { op: 'LOG', find: 'NIGHTJOB', say: 'NIGHTJOB は 23 時ごろ $HASP100 で投入されたが、$HASP373（開始）がない。' },
+        { op: 'LOG', find: '$HASP0', say: '22 時半に MSTCON から $P が入力され、$HASP099 ALL AVAILABLE FUNCTIONS COMPLETE が出ている。その後 $S は入力されていない。' },
+        { op: 'DIAG', cause: 'A', evidence: '$HASP099', say: '原因は A、根拠は $P と $HASP099。' },
+        { op: 'CMD', in: '$S', say: 'JES2 の処理を再開。NIGHTJOB が $HASP373 で始まる。' },
+        { op: 'WAIT', min: 5, say: 'NIGHTJOB が RC=0000 で終わる。' },
+      ],
+      points: ['$P はイニシエーターを止めるだけで、ジョブの投入は受け付ける。そのため「投入されたのに始まらない」になる。', '$HASP099 は「全機能が休止した」という意味。停止の途中でないのに出ていたら、$P のままになっていないか疑う。'],
+      mistakes: [['IPL し直す', 'IPL すれば $P は解けるが、業務を止める大げさな対応。$S で済む。'], ['NIGHTJOB を取り消して流し直す', '$P のままなので、流し直しても始まらない。']],
+    },
+    {
+      id: 'XS5', syslog: true, title: '「夜間のジョブが異常終了した。オペレーターが止めたのか？」',
+      level: '中級', time: '10分', clock: NIGHT,
+      story: '朝 7 時、給与担当から「夜間の給与計算 PAYCALC が異常終了している。オペレーターが止めたのか？ 再実行してよいか？」と問い合わせがありました。夜勤者は「テスト用のジョブを1本、指示で取り消した」とだけ書き残しています。',
+      handoff: ['給与担当: PAYCALC は 23 時ごろ自動投入される。', '引き継ぎ簿（夜勤）: 指示により、テスト用の長時間ジョブを1本取り消した。', '運用ルール: 利用者のジョブを、原因が分からないまま再実行しない。原因は利用者（給与担当）に伝える。'],
+      order: ['SYSLOG で、PAYCALC がどう終わったかを調べる。', '原因と根拠のメッセージを「診断の報告」に記入する（これが給与担当への回答になる）。', 'ジョブの取り消しや IPL など、システムへの操作はしない。'],
+      history: HUP.concat([W(60), J({ name: 'TESTJOB', remain: 600 }), W(30), C('C TESTJOB'), W(30),
+        J({ name: 'PAYCALC', remain: 3, end: 'ABEND=S806', lines: ['CSV003I REQUESTED MODULE PAYCALC1 NOT FOUND', 'CSV028I ABEND806-04  JOBNAME=PAYCALC   STEPNAME=STEP1', 'IEA995I SYMPTOM DUMP OUTPUT  SYSTEM COMPLETION CODE=806  REASON CODE=00000004', 'IEF450I PAYCALC STEP1 - ABEND=S806 U0000 REASON=00000004'] }),
+        W(5), J({ name: 'DAILYBK', remain: 20 }), W(474)]),
+      prepSay: '前夜 21 時から朝までの記録が SYSLOG に残っている。',
+      diagnosis: { question: 'PAYCALC が異常終了した原因は？', answer: 'B', evidence: ['CSV003I', 'CSV028I', 'IEA995I'],
+        choices: [{ id: 'A', text: 'オペレーターが取り消した（S222）' }, { id: 'B', text: '呼び出すプログラム PAYCALC1 が見つからなかった（S806）。JCL の PGM= やライブラリ（STEPLIB）の指定を利用者が確認する' }, { id: 'C', text: 'データセット待ちで時間切れになった（S522）' }, { id: 'D', text: 'システムの障害で中断した' }] },
+      checks: [
+        LOOKED, DIAG('B', 'プログラムが見つからない S806'), EVID(['CSV003I', 'CSV028I', 'IEA995I']),
+        { item: 'ジョブの取り消しや IPL などの操作をしていない', fn: (s, ev) => noHarm(ev) && !has(ev, 'cancel') && !has(ev, 'force') },
+      ],
+      solution: [
+        { op: 'LOG', find: 'PAYCALC', say: 'PAYCALC は 23 時ごろ始まり、CSV003I REQUESTED MODULE PAYCALC1 NOT FOUND、IEA995I（完了コード 806・理由 04）、IEF450I ABEND=S806 で終わっている。' },
+        { op: 'LOG', find: 'IEE301I', say: '夜勤者が取り消したのは TESTJOB（IEE301I TESTJOB CANCEL COMMAND ACCEPTED、S222）で、PAYCALC ではない。' },
+        { op: 'DIAG', cause: 'B', evidence: 'CSV003I', say: '原因は B。給与担当には「オペレーターの取り消しではなく、プログラム PAYCALC1 が見つからずに S806 で終わった。JCL とライブラリの確認が必要で、そのまま再実行しても同じ結果になる」と伝える。' },
+      ],
+      points: ['異常終了コードで原因の方向が分かる。S222 はオペレーターの取り消し、S806 はプログラムが見つからない、S522 は待ち時間の超過。', 'IEF450I は取り消しでも出る。どのジョブの、どの完了コードかを必ず確かめる。', 'プログラムが見つからないのはオペレーターでは直せない。再実行しても同じなので、利用者に原因を伝える。'],
+      mistakes: [['「オペレーターが止めた」と答える', '夜勤者が取り消したのは TESTJOB。ジョブ名を確かめずに引き継ぎ簿だけで判断した誤り。'], ['原因を確かめずに再実行を勧める', '同じ S806 で終わる。']],
+    },
+  );
+
   // シナリオを用意する（prep まで実行）。挑戦開始時点の時刻と操作履歴の位置を返す
   // Mock を渡すと、連携演習では模擬の jcl-terminal（link-mock.js）を相手にする（ページの模範解答とテスト用）。
   // シミュレータの挑戦モードでは Mock を渡さず、別タブの本物の jcl-terminal とつなぐ。
   function setup(Sim, x, Mock) {
-    const s = new Sim({ scenarios: x.scenarios || [], triggers: x.triggers, jobs: x.jobs, linkDurations: x.linkDurations });
+    const s = new Sim({ scenarios: x.scenarios || [], triggers: x.triggers, jobs: x.jobs, linkDurations: x.linkDurations, clock: x.clock });
     const term = x.link && Mock ? new Mock.MockTerm(s) : null;
     const ctx = { sim: s, term };
     for (const st of x.prep || []) exec(ctx, st);
+    // 前のシフトの出来事: SYSLOG にだけ残す（コンソールの表示はここで区切る）
+    if (x.history) { for (const st of x.history) exec(ctx, st); ctx.historyEnd = s.out.length; ctx.historyLog = s.syslogLines(''); }
     ctx.start = new Date(s.clock.getTime()); ctx.evFrom = s.events.length;
     return ctx;
   }
@@ -384,6 +536,9 @@
   }
   function execStep(s, st, term) {
     if (st.op === 'TERM') { if (term) term.submit(st.sub); return {}; }
+    if (st.op === 'JOBIN') { s.addBatch(Object.assign({}, st.job)); return {}; }
+    if (st.op === 'LOG') return { log: s.viewSyslog(st.find) };
+    if (st.op === 'DIAG') { s.reportDiagnosis(st.cause, st.evidence); return {}; }
     if (st.op === 'LOAD') s.hmcLoad(st.addr, st.lp);
     else if (st.op === 'RESET') s.hmcReset();
     else if (st.op === 'WAIT') s.advance(st.min);
@@ -402,8 +557,8 @@
   // 模範解答を実行して、ステップごとの出力と採点を返す
   function runSolution(Sim, x, Mock) {
     const ctx = setup(Sim, x, Mock);
-    const steps = x.solution.map(st => { const from = ctx.sim.out.length; const r = exec(ctx, st) || {}; return { step: st, cmd: r.cmd, errs: r.errs || [], out: ctx.sim.out.slice(from) }; });
-    return { sim: ctx.sim, steps, grade: grade(x, ctx), minutes: minutes(ctx.sim, ctx.start) };
+    const steps = x.solution.map(st => { const from = ctx.sim.out.length; const r = exec(ctx, st) || {}; return { step: st, cmd: r.cmd, errs: r.errs || [], out: ctx.sim.out.slice(from), log: r.log }; });
+    return { sim: ctx.sim, steps, grade: grade(x, ctx), minutes: minutes(ctx.sim, ctx.start), historyLog: ctx.historyLog || [] };
   }
 
   const api = { SCENARIOS: X, setup, grade, runSolution };

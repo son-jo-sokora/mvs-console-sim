@@ -69,7 +69,8 @@
       this.linkOut = null;
       this.termPresent = false;
       this.linkDur = opts.linkDurations || {}; // ジョブ名 → 実行にかかる分（既定 0 ＝すぐ終わる）
-      this.clock = new Date(Date.UTC(2026, 10, 5, 6, 0, 0)); // 2026-11-05 06:00
+      this.clock = opts.clock ? new Date(opts.clock + 'Z') : new Date(Date.UTC(2026, 10, 5, 6, 0, 0)); // 既定 2026-11-05 06:00
+      this.syslog = [];       // SYSLOG（ハードコピーログ）: コンソールに出なかったメッセージも残る
       this._resetMachine();
       // 前回の運転状態（シナリオで変わる）
       this.ckptFormatted = !this.sc.has('FIRSTJES');
@@ -104,11 +105,45 @@
     emit(text, cls, msgid) {
       cls = cls || 'info';
       if (!msgid) { const m = /^(\$HASP\d{3,4}|[A-Z]{3,5}\d{3,4}[A-Z])(?![A-Z0-9])/.exec(text.replace(/^\*\d\d /, '')); msgid = m ? m[1] : null; }
-      // IMSI による NIP 中の情報メッセージ抑止
+      // SYSLOG にはシステムのメッセージとコマンドを残す（シミュレータの注記・HMC の表示・（連絡）は残さない）
+      if (cls !== 'sim' && cls !== 'hmc') this._syslog(text, cls);
+      // IMSI による NIP 中の情報メッセージ抑止（SYSLOG には残る）
       if (this.phase === 'NIP' && cls === 'info' && this.imsi && !this.imsi.show) { this._log('suppressed', msgid); return; }
       const rec = { time: this.ts(), text, cls, msgid };
       this.out.push(rec);
       this.listeners.forEach(f => f(rec));
+    }
+    // SYSLOG の1レコード。並びは jcl-terminal の SYSLOG 画面と同じ（種別・システム名・年日・時刻・ジョブ番号/コンソール・本文）
+    _syslog(text, cls) {
+      const d = this.clock, yd = String(d.getUTCFullYear()).slice(2) + pad(Math.floor((d - Date.UTC(d.getUTCFullYear(), 0, 0)) / 864e5), 3);
+      const t = pad(d.getUTCHours(), 2) + ':' + pad(d.getUTCMinutes(), 2) + ':' + pad(d.getUTCSeconds(), 2) + '.00';
+      let who = '';
+      if (cls === 'cmd') who = 'MSTCON';
+      else if (this._who) who = this._who;
+      else {
+        // メッセージの最初の語がジョブ名なら、そのジョブ番号
+        const m = /^(?:\*\d\d )?\S+\s+(?:JOB\s+)?([A-Z@#$][A-Z0-9@#$]{0,7})\b/.exec(text);
+        const j = m && this.jobs.find(x => x.name === m[1]);
+        if (j) who = j.jobid;
+      }
+      const lines = String(text).split('\n');
+      lines.forEach((l, k) => this.syslog.push({ yd, t, type: cls === 'cmd' ? 'NC' : lines.length === 1 ? 'N ' : k === 0 ? 'MR' : k === lines.length - 1 ? 'ER' : 'DR', who, text: l, ts: d.getTime() }));
+    }
+    syslogLines(filter) {
+      const f = (filter || '').trim().toUpperCase();
+      return this.syslog.filter(r => !f || r.text.toUpperCase().includes(f) || r.who.includes(f))
+        .map(r => r.type + '0000000 ' + SYSNAME.padEnd(8) + ' ' + r.yd + ' ' + r.t + ' ' + r.who.padEnd(8) + ' 00000290  ' + r.text);
+    }
+    // SYSLOG を見た（採点で「調べてから対応したか」を見る）
+    viewSyslog(filter) { this._log('syslog-view', filter || ''); return this.syslogLines(filter); }
+    // 診断の報告（原因の選択肢 ID と、根拠のメッセージ）
+    reportDiagnosis(cause, evidence) { this._log('diag', String(cause) + '|' + String(evidence || '').toUpperCase()); }
+    // バッチジョブの投入（演習の「前のシフト」用）。q: {name, remain, dsns, end, lines}
+    addBatch(q) {
+      this.emit('$HASP100 ' + q.name.padEnd(8) + ' ON INTRDR' + ' '.repeat(12) + 'BATCH'.padEnd(20) + ' FROM ' + (q.from || 'STC00000 SCHEDULR'));
+      (this._batchQueued = this._batchQueued || []).push(q);
+      this._log('batch-submit', q.name);
+      this._initiate(); this._afterOp();
     }
     note(text) { this.emit(text, 'sim', null); }
     hmc(text) { this.emit(text, 'hmc', null); }
@@ -521,7 +556,14 @@
             if (!j.linked.asks && !j.runSent) { j.remain--; if (j.remain <= 0) { j.runSent = true; this._send({ t: 'run', id: j.jobid }); } }
             continue;
           }
-          j.remain--; if (j.remain <= 0) this._endJob(j, 'RC=0000');
+          j.remain--;
+          if (j.remain <= 0) {
+            // 終わり方を指定されたジョブ（例: ABEND=S806 と、その前に出るメッセージ）
+            this._who = j.jobid;     // SYSLOG ではこのジョブのメッセージとして記録する
+            (j.endLines || []).forEach(l => this.emit(l, /ABEND|NOT FOUND/.test(l) ? 'error' : 'info'));
+            this._who = null;
+            this._endJob(j, j.end || 'RC=0000');
+          }
         }
         if (this.jes === 'UP') this._initiate();
       }
@@ -558,8 +600,8 @@
     }
     // silent: 終了メッセージ（$HASP395 など）は連携相手から届いた行で表示済み
     _endJob(j, how, silent) {
-      this.jobs = this.jobs.filter(x => x !== j);
       if (!silent) this.emit('$HASP395 ' + j.name.padEnd(8) + ' ENDED - ' + how);
+      this.jobs = this.jobs.filter(x => x !== j);
       this._log('job-end', j.name + ' ' + how);
       if (j.linked && j.type === 'JOB') j.linked.state = 'DONE';
       if (j.type === 'TSU' && j.linked) { this._send({ t: 'logoff', how }); this.note('（連携）USER01（jcl-terminal）の TSO セッションが終了しました'); }
@@ -575,7 +617,7 @@
     }
     _startJob(q, linked) {
       const j = this._addJob(q.name, 'JOB', linked ? (this.linkDur[q.name] || 0) : q.remain, q.cancelable);
-      j.dsns = q.dsns || [];
+      j.dsns = q.dsns || []; j.end = q.end; j.endLines = q.lines;
       if (linked) { j.linked = linked; j.jobid = linked.jobid; linked.state = 'EXEC'; }
       this.emit('$HASP373 ' + j.name.padEnd(8) + ' STARTED - INIT 1    - CLASS ' + (q.cls || 'A') + '        - SYS ' + SYSNAME);
       const busy = this._enqConflicts(j);
@@ -811,7 +853,8 @@
       const c = up.replace(/\s+/g, '');
       if (c === '$S') {
         this.jesDrain = false;
-        if (this.jes === 'HOLD') { this.jes = 'UP'; this._log('jes-$S'); }
+        if (this.jes === 'HOLD') this.jes = 'UP';
+        this._log('jes-$S');
         this.emit('$HASP000 OK');
         this._initiate(); return;
       }
@@ -1031,8 +1074,9 @@
     }
 
     // ---- 採点 -----------------------------------------------------------
-    evaluate() {
-      const ev = this.events, idx = t => ev.findIndex(e => e.type === t);
+    // from: 採点の対象にする操作履歴の開始位置（演習では、開始前の「前のシフト」の操作を含めない）
+    evaluate(from) {
+      const ev = this.events.slice(from || 0), idx = t => ev.findIndex(e => e.type === t);
       const res = [];
       const ipl = idx('ipl-complete') >= 0;
       res.push({ ok: ipl, item: 'IPL が完了した（IEE389I）' });

@@ -96,8 +96,9 @@ table.mis th { background: var(--panel2); font-weight: 600; }
 (() => {
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   const nav = document.getElementById('nav'), list = document.getElementById('list');
-  let linkHead = false;
+  let linkHead = false, logHead = false;
   for (const x of MvsExercises.SCENARIOS) {
+    if (x.syslog && !logHead) { logHead = true; nav.insertAdjacentHTML('beforeend', '<div style="color:var(--accent);font-weight:600;margin:12px 0 4px">SYSLOG 調査演習</div>'); list.insertAdjacentHTML('beforeend', '<h2 style="font-size:17px;margin:28px 0 6px">SYSLOG 調査演習（記録から原因を推定する）</h2><p class="small" style="margin:0 0 12px">あなたは朝の交代でコンソールに着いたところです。夜のあいだの出来事は、シミュレータのコンソールの上にある「SYSLOG」タブで調べます。原因と根拠のメッセージを「診断の報告」に記入してから対応します。夜の出来事は、作り話ではなくシミュレータで実際に操作して作った記録です。</p>'); }
     if (x.link && !linkHead) { linkHead = true; nav.insertAdjacentHTML('beforeend', '<div style="color:var(--accent);font-weight:600;margin:12px 0 4px">連携演習（jcl-terminal と一緒に）</div>'); list.insertAdjacentHTML('beforeend', '<h2 style="font-size:17px;margin:28px 0 12px">連携演習（jcl-terminal と一緒に使う）</h2>'); }
     nav.insertAdjacentHTML('beforeend', '<a href="#' + x.id + '"><span class="no">' + x.id + '</span>' + esc(x.title) + '</a>');
     const r = MvsExercises.runSolution(MvsSim, x, MvsLinkMock);
@@ -107,13 +108,15 @@ table.mis th { background: var(--panel2); font-weight: 600; }
     h += '<div class="label">状況</div><p style="margin:4px 0">' + esc(x.story) + '</p>';
     h += '<div class="label">連絡事項</div><div class="box memo"><ul>' + x.handoff.map(m => '<li>' + esc(m) + '</li>').join('') + '</ul></div>';
     h += '<div class="label">作業指示書</div><div class="box order"><ol>' + x.order.map(m => '<li>' + esc(m) + '</li>').join('') + '</ol></div>';
-    h += '<div class="label">完了条件</div><div class="goal">' + esc(x.goal) + '</div>';
+    if (x.goal) h += '<div class="label">完了条件</div><div class="goal">' + esc(x.goal) + '</div>';
+    if (x.diagnosis) h += '<div class="label">診断の報告（' + esc(x.diagnosis.question) + '）</div><div class="box"><ul>' + x.diagnosis.choices.map(c => '<li><b>' + c.id + '</b> ' + esc(c.text) + '</li>').join('') + '</ul><p class="small" style="margin:4px 0">どれか1つを選び、根拠にしたメッセージ ID を書きます。</p></div>';
     h += '<div class="label">採点項目</div><ul>' + x.checks.map(c => '<li>' + esc(c.item) + '</li>').join('') + '</ul>';
     h += '<a class="btn" href="index.html?ex=' + x.id + (x.link ? '&link' : '') + '">シミュレータで挑戦する</a>' + (x.link ? ' <a class="btn" style="background:#2a3a1d;border-color:#4a6a2c" href="../jcl-terminal/?link" target="_blank" rel="noopener">jcl-terminal を開く ↗</a>' : '');
     h += '<details class="ans"><summary>解答と解説（挑戦してから開いてください）</summary>';
     h += '<div class="label">判断のポイント</div><ul>' + x.points.map(p => '<li>' + esc(p) + '</li>').join('') + '</ul>';
     h += '<div class="label">模範解答</div>';
     if (x.prepSay) h += '<p class="small">開始時の状態: ' + esc(x.prepSay) + '</p>';
+    if (x.history) h += '<details class="out"><summary>（参考）夜のあいだの SYSLOG 全体（' + r.sim.syslog.length + ' 行のうち、交代時点まで）</summary><pre class="con" style="white-space:pre;overflow-x:auto">' + r.historyLog.map(l => '<span class="info">' + esc(l) + '</span>').join('\n') + '</pre></details>';
     h += '<ol class="steps">';
     for (const s of r.steps) {
       const st = s.step;
@@ -123,8 +126,11 @@ table.mis th { background: var(--panel2); font-weight: 600; }
       else if (st.op === 'WAIT') h += '<div class="act"><span class="kind">待つ</span>' + st.min + ' 分</div>';
       else if (st.op === 'RESET') h += '<div class="act"><span class="kind">HMC</span>システムリセット</div>';
       else if (st.op === 'NOTE') h += '<div class="act note">確認・判断</div>';
+      else if (st.op === 'LOG') h += '<div class="act"><span class="kind">SYSLOG</span>「<code>' + esc(st.find) + '</code>」で検索</div>';
+      else if (st.op === 'DIAG') { const ch = x.diagnosis.choices.find(c => c.id === st.cause); h += '<div class="act"><span class="kind">診断の報告</span>原因 <code>' + esc(st.cause) + '</code>（' + esc(ch ? ch.text : '') + '）、根拠 <code>' + esc(st.evidence) + '</code></div>'; }
       else if (st.op === 'TERM') h += '<div class="act"><span class="kind">jcl-terminal（利用者役）</span><code>' + esc(st.sub) + '</code> を開いて <code>SUB</code></div>';
       if (st.say) h += '<div>' + esc(st.say) + '</div>';
+      if (s.log) h += '<details class="out" open><summary>SYSLOG の検索結果（' + s.log.length + ' 行）</summary><pre class="con" style="white-space:pre;overflow-x:auto">' + s.log.map(l => '<span class="info">' + esc(l) + '</span>').join('\n') + '</pre></details>';
       const out = s.out.filter(o => !(o.cls === 'cmd' && o.text === s.cmd));
       if (out.length) h += '<details class="out"' + (out.some(o => o.cls === 'wtor' || o.cls === 'error' || o.text.startsWith('（連絡）') || o.cls === 'hmc') ? ' open' : '') + '><summary>画面（' + out.length + ' 行）</summary><pre class="con">' + out.map(o => '<span class="' + o.cls + '">' + esc(o.text) + '</span>').join('\n') + '</pre></details>';
       h += '</li>';
