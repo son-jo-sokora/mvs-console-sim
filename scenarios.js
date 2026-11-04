@@ -372,8 +372,10 @@
   const C = s => ({ op: 'CMD', in: s }), W = m => ({ op: 'WAIT', min: m }), J = job => ({ op: 'JOBIN', job });
   const NIGHT = '2026-11-04T21:00:00';
   const HUP = UPALL.concat([W(1)]);
-  const diagIs = (ev, id) => { const d = ev.filter(e => e.type === 'diag').pop(); return !!d && d.detail.split('|')[0] === id; };
-  const evidenceIn = (ev, ids) => { const d = ev.filter(e => e.type === 'diag').pop(); if (!d) return false; const t = d.detail.split('|')[1] || ''; return ids.some(i => t.includes(i)); };
+  // 診断の報告は「事象の key|原因|根拠」。同じ事象について最後に出した報告を採点する
+  const lastDiag = (ev, key) => ev.filter(e => e.type === 'diag' && e.detail.split('|')[0] === (key || 'D')).pop();
+  const diagIs = (ev, id, key) => { const d = lastDiag(ev, key); return !!d && d.detail.split('|')[1] === id; };
+  const evidenceIn = (ev, ids, key) => { const d = lastDiag(ev, key); if (!d) return false; const t = d.detail.split('|')[2] || ''; return ids.some(i => t.includes(i)); };
   const lookedFirst = (ev, type, pre) => { const v = idx(ev, 'syslog-view'), a = idx(ev, type, pre); return v >= 0 && a > v; };
   const noHarm = ev => !has(ev, 'reset') && !has(ev, 'load') && !has(ev, 'eod') && !has(ev, 'pjes2') && !has(ev, 'znet');
   const LOOKED = { item: 'SYSLOG を調べた', fn: (s, ev) => has(ev, 'syslog-view') };
@@ -516,16 +518,228 @@
     },
   );
 
+  // ======================= 複合演習（1つのシフトで、いくつもの事象に対応する） =======================
+  // diagnoses: 事象ごとの診断の報告（key で区別）。checks の group で採点を段階に分ける。
+  // triggers の at（時刻）で、決まった時刻に連絡やジョブが来る。時間は「+1分」「+5分」や WAIT n で進める。
+  const D = (key, id, ids, label) => [
+    { item: key + ': 原因の診断が正しい（' + label + '）', fn: (s, ev) => diagIs(ev, id, key) },
+    { item: key + ': 根拠のメッセージを示した（' + ids.join(' / ') + ' のどれか）', fn: (s, ev) => evidenceIn(ev, ids, key) },
+  ];
+  const grp = (g, items) => items.map(c => Object.assign({ group: g }, c));
+  const SALESUPD_LONG = { name: 'SALESUPD', remain: 600, dsns: [{ dsn: 'USER01.SALES.DATA', excl: true }] };
+  const SHUT_XCF = SHUT.concat([C('V XCF,SYSA,OFFLINE'), C('R #IXC371D#,SYSNAME=SYSA')]);
+  const orderOk = (s, ev) => { const e = ev.find(x => x.type === 'eod'); return !!e && e.jes === 'DOWN' && idx(ev, 'vxcf') > idx(ev, 'eod'); };
+  X.push(
+    {
+      id: 'C1', composite: true, link: true, title: '日勤の一日（交代から計画停止まで）',
+      level: '上級', time: '40〜60分', clock: NIGHT,
+      story: '朝 7 時に日勤として交代し、17 時の計画停止までを担当します。途中で、利用者（USER01）や業務担当から連絡が来ます。利用者の操作は jcl-terminal のタブで行います。',
+      handoff: [
+        '利用者 USER01: 朝から TSO にログオンできない（7 時の時点）。',
+        '職場の手順: 業務開始の前に、利用者に確認用ジョブ HELLO を流してもらい、RC=0000 を確認する。',
+        '売上担当: 10 時に売上更新 SALESUPD を投入する。普段は 30 分ほどで終わる。長引いていたら取り消してよい（あとで再実行する）。',
+        '引き継ぎ簿（夜勤）: 特記事項なし。',
+        '時間の進め方: 次の連絡が来るまで「+5分」ボタンや WAIT n で時間を進める（10 時・15 時・17 時に連絡が来る）。',
+      ],
+      order: [
+        '【事象1】TSO にログオンできない原因を SYSLOG で調べ、診断を報告（D1）してから復旧する。',
+        '【業務開始】利用者役で HELLO を SUB し、RC=0000 を確認する。',
+        '【事象2】10 時以降の連絡に対応する。利用者のジョブが終わらない場合は原因を調べて報告（D2）し、売上担当の了解の範囲で対応する。',
+        '【問い合わせ】15 時の連絡に従い、利用者のジョブの問い合わせに応答する。',
+        '【計画停止】17 時の連絡に従い、標準の順序で停止して SYSA を sysplex から外す。',
+      ],
+      history: HUP.concat([J({ name: 'DAILYBK', remain: 25 }), W(30), C('D A,L'), W(60), C('P TSO'), J({ name: 'NIGHTSUM', remain: 15 }), W(20), W(488)]),
+      prepSay: '朝 7 時。前夜の記録が SYSLOG に残っている。jcl-terminal を連携モードで開いておく。',
+      triggers: [
+        { at: '2026-11-05T10:00', do: { job: SALESUPD_LONG, note: '売上担当: 売上更新 SALESUPD を投入しました。利用者 USER01: 続けて売上レポート LINKRPT を流します（jcl-terminal で LINKRPT を SUB してください）。' } },
+        { at: '2026-11-05T10:30', do: { note: '利用者 USER01: LINKRPT がなかなか終わりません。調べてもらえますか？' } },
+        { at: '2026-11-05T15:00', do: { note: '利用者 USER01: 月次売上レポート LINKASK を流します（jcl-terminal で LINKASK を SUB）。売上担当: 今日は印刷しないので、問い合わせには NO と答えてください。' } },
+        { at: '2026-11-05T17:00', do: { note: '運用責任者: 17 時になりました。計画停止を始めてください。標準の順序で停止し、最後に V XCF で SYSA を sysplex から外します。' } },
+      ],
+      diagnoses: [
+        { key: 'D1', title: '事象1: TSO にログオンできない', question: '利用者が TSO にログオンできない原因は？', answer: 'B', evidence: ['IKT006I'],
+          choices: [{ id: 'A', text: 'VTAM が停止している' }, { id: 'B', text: '夜間に TSO（TCAS）が停止され、起動し直されていない' }, { id: 'C', text: 'JES2 が停止している' }, { id: 'D', text: 'SYSA が sysplex から外れている' }] },
+        { key: 'D2', title: '事象2: LINKRPT が終わらない', question: '利用者の LINKRPT が終わらない原因は？', answer: 'B', evidence: ['IEF099I', 'IEF863I', 'IEF861I'],
+          choices: [{ id: 'A', text: 'LINKRPT の JCL エラー' }, { id: 'B', text: 'データセット待ち（SALESUPD が USER01.SALES.DATA を使ったまま、普段より長く動いている）' }, { id: 'C', text: 'イニシエーターが $P で休止している' }, { id: 'D', text: '利用者の TSO セッションが切れている' }] },
+      ],
+      checks: [].concat(
+        grp('事象1: TSO', [...D('D1', 'B', ['IKT006I'], 'TSO が夜間に停止されたまま'),
+          { item: 'SYSLOG を調べてから TSO を起動した', fn: (s, ev) => lookedFirst(ev, 'started', 'TSO') }]),
+        grp('業務開始', [{ item: 'HELLO が CC 0000 で終わった', fn: s => s.linkResult('HELLO') === 'CC 0000' }]),
+        grp('事象2: LINKRPT', [...D('D2', 'B', ['IEF099I', 'IEF863I', 'IEF861I'], 'データセット待ち'),
+          { item: 'SALESUPD を取り消し、LINKRPT は取り消していない', fn: (s, ev) => has(ev, 'cancel', 'SALESUPD') && !has(ev, 'cancel', 'LINKRPT') },
+          { item: 'LINKRPT が CC 0000 で終わった', fn: s => s.linkResult('LINKRPT') === 'CC 0000' }]),
+        grp('問い合わせ', [{ item: 'LINKASK に NO と応答し、CC 0004 で終わった', fn: (s, ev) => has(ev, 'link-reply', 'LINKASK NO') && s.linkResult('LINKASK') === 'CC 0004' }]),
+        grp('計画停止', [{ item: '17 時の連絡の後に停止を始めた', fn: (s, ev) => { const p = ev.find(e => e.type === 'cmd' && /^P TSO/i.test(e.detail)); return !!p && p.time >= '17.00.00'; } },
+          { item: 'JES2 停止 → HALT EOD → V XCF の順', fn: orderOk },
+          { item: 'SYSA が sysplex から外れた（待機状態 0A2）', fn: s => s.phase === 'PARTITIONED' }]),
+      ),
+      solution: [
+        { op: 'LOG', find: 'TSO', say: '【事象1】22 時半に P TSO が入力され、その後 S TSO がない。' },
+        { op: 'LOG', find: 'IKT', say: 'IKT006I TCAS ENDED のまま。' },
+        { op: 'DIAG', key: 'D1', cause: 'B', evidence: 'IKT006I' },
+        { op: 'CMD', in: 'S TSO', say: 'TSO を起動すると、jcl-terminal の USER01 がログオンする。' },
+        { op: 'TERM', sub: 'HELLO', say: '【業務開始】（利用者役）HELLO を SUB → RC=0000 を確認。' },
+        { op: 'CMD', in: 'D A,L' },
+        { op: 'WAIT', min: 185, say: '10 時まで時間を進める。10 時に SALESUPD が投入される連絡が来る。' },
+        { op: 'TERM', sub: 'LINKRPT', say: '【事象2】（利用者役）LINKRPT を SUB。IEF861I・IEF863I・IEF099I が出て待つ。' },
+        { op: 'WAIT', min: 30, say: '10 時半、利用者から「終わらない」と連絡が来る。' },
+        { op: 'LOG', find: 'LINKRPT' },
+        { op: 'LOG', find: 'SALESUPD', say: 'SALESUPD は 10 時に始まり、30 分を過ぎても終わっていない。' },
+        { op: 'DIAG', key: 'D2', cause: 'B', evidence: 'IEF863I' },
+        { op: 'CMD', in: 'C SALESUPD', say: '売上担当の了解どおり取り消す。LINKRPT が進み、RC=0000 で終わる。' },
+        { op: 'WAIT', min: 270, say: '15 時まで時間を進める。' },
+        { op: 'TERM', sub: 'LINKASK', say: '【問い合わせ】（利用者役）LINKASK を SUB。OPR001A が出る。' },
+        { op: 'CMD', in: 'R #OPR001A#,NO', say: '売上担当の指示どおり NO。RC=0004。' },
+        { op: 'WAIT', min: 120, say: '17 時まで時間を進める。' },
+        ...SHUT_XCF.map((s, k) => k === 0 ? Object.assign({}, s, { say: '【計画停止】USER01 も IKT010D の対象。' }) : s),
+      ],
+      points: ['一つのシフトの中で、調査（SYSLOG）・利用者との連携・計画作業が順に来る。事象ごとに「調べる → 報告 → 対応」を繰り返す。', '時刻で来る連絡を見落とさない。連絡が来るまでは、むやみに操作せず時間を進める。'],
+      mistakes: [['事象1 で原因を調べずに IPL', '夜間の記録も業務も途切れる。原因（P TSO）は S TSO だけで直る。'], ['事象2 で LINKRPT を取り消す', '利用者は結果を得られない。SALESUPD が残ったままなので、15 時の LINKASK も同じデータセットを待って問い合わせが出ず、17 時の停止でも $P JES2 が通らない（誤りが後の事象に連鎖する）。'], ['17 時前に停止を始める', '計画外の停止。業務担当のジョブに影響する。']],
+    },
+    {
+      id: 'C2', composite: true, link: true, title: '障害の夜（ハング・再 IPL・ジョブの再実行）',
+      level: '上級', time: '30〜40分', clock: '2026-11-05T21:00:00',
+      story: '夜勤です。21 時の時点で SYSA は通常どおり稼働中で、利用者 USER01 が TSO にログオンしています。sysplex の相手 SYSB は月次保守のため 21 時半に停止しました。',
+      handoff: [
+        '運用手順: SYSA が応答しなくなったら、HMC からシステムリセットして通常のロードパラメーター（0A8200M1）で IPL する（今夜はダンプの取得は不要）。',
+        '運用手順: IPL 後はスプールを残す（WARM）。',
+        '保守担当: SYSB は 21 時半から明朝まで停止（HMC で非稼働）。',
+        '時間の進め方: 「+5分」ボタンや WAIT n で時間を進める。22 時に利用者から連絡が来る。',
+      ],
+      order: [
+        '22 時の連絡に従い、利用者役で LINKRPT を SUB する。',
+        'SYSA に異常が起きたら、手順に従って復旧する。IPL 中に JES2 のロックの確認が出たら、なぜ出たのかを報告（D1）してから応答する。',
+        '業務を再開（JES2・VTAM・TCP/IP・TSO）し、利用者の LINKRPT が終わるのを確認する。',
+        '利用者からの問い合わせに、SYSLOG を調べて回答（D2）する。',
+      ],
+      prep: UPALL, prepSay: '21 時。SYSA 稼働中、USER01 は TSO にログオン中（jcl-terminal を連携モードで開いておく）。',
+      linkDurations: { LINKRPT: 120 },
+      triggers: [
+        { at: '2026-11-05T22:00', do: { note: '利用者 USER01: 夜間の売上レポート LINKRPT を流します（jcl-terminal で LINKRPT を SUB）。2 時間ほどかかるジョブです。' } },
+        { at: '2026-11-05T23:00', do: { hang: true, scenario: 'RESIDUAL', note: '監視担当: SYSA が応答していません。コンソールもジョブも動いていないようです。' } },
+        { after: 'link-result:LINKRPT', do: { note: '利用者 USER01: LINKRPT のジョブログを見ると、夜中に最初から流れ直しているようです。なぜですか？（SYSLOG で調べて回答してください）' } },
+      ],
+      diagnoses: [
+        { key: 'D1', title: 'IPL 中の $HASP479', question: 'IPL 後の JES2 の起動で $HASP479（MEMBER=SYSA）が出た理由は？', answer: 'B', evidence: ['$HASP479', '$HASP454'],
+          choices: [{ id: 'A', text: '別のシステムで JES2 が動いていて、ロックを使っている' }, { id: 'B', text: 'SYSA が JES2 を停止しないままリセットされたので、SYSA 自身のロックが残った' }, { id: 'C', text: 'チェックポイントのデータセットが壊れた' }, { id: 'D', text: 'スプールが一杯になった' }] },
+        { key: 'D2', title: '利用者の問い合わせ: LINKRPT が流れ直した', question: 'LINKRPT が最初から流れ直した理由は？', answer: 'B', evidence: ['$HASP406'],
+          choices: [{ id: 'A', text: '利用者が LINKRPT を2回投入した' }, { id: 'B', text: 'SYSA が止まったとき実行中だったので、JES2 のウォームスタートで再実行待ちに戻され、もう一度実行された' }, { id: 'C', text: 'オペレーターが $AJ で再実行した' }, { id: 'D', text: 'JCL エラーで自動的に再試行された' }] },
+      ],
+      checks: [].concat(
+        grp('ハングからの復旧', [
+          { item: 'ハングの後にシステムリセットして IPL した', fn: (s, ev) => idx(ev, 'hang') >= 0 && idx(ev, 'reset') > idx(ev, 'hang') && idx(ev, 'ipl-complete') > idx(ev, 'reset') },
+          { item: 'IXC405D に I（SYSB は保守で停止中）', fn: (s, ev) => has(ev, 'xcf', 'I') && !has(ev, 'xcf', 'J') }]),
+        grp('JES2 の起動', [...D('D1', 'B', ['$HASP479', '$HASP454'], 'SYSA 自身のロック'),
+          { item: '報告してから $HASP454 に Y と応答した', fn: (s, ev) => { const d = ev.findIndex(e => e.type === 'diag' && e.detail.startsWith('D1|')); const y = idx(ev, 'jes-steal-lock'); return d >= 0 && y > d; } },
+          { item: 'スプールを残した（WARM）', fn: (s, ev) => has(ev, 'jes-start', 'WARM') && !has(ev, 'jes-start', 'COLD') }]),
+        grp('業務の再開', [
+          { item: 'LINKRPT が再実行されて CC 0000 で終わった', fn: s => s.linkResult('LINKRPT') === 'CC 0000' },
+          { item: '業務開始状態（JES2・VTAM・TCP/IP・TSO が稼働）', fn: s => allUp(s) }]),
+        grp('利用者への回答', D('D2', 'B', ['$HASP406'], 'ウォームスタートで再実行')),
+      ),
+      solution: [
+        { op: 'WAIT', min: 61, say: '22 時まで時間を進める。利用者から連絡が来る。' },
+        { op: 'TERM', sub: 'LINKRPT', say: '（利用者役）LINKRPT を SUB。$HASP373 で始まる（2 時間かかる）。' },
+        { op: 'WAIT', min: 60, say: '23 時に SYSA が応答しなくなる。' },
+        { op: 'CMD', in: 'D A,L', say: 'コンソールが応答しないことを確認。' },
+        { op: 'RESET', say: '手順に従い HMC からシステムリセット。' },
+        { op: 'LOAD', addr: '0A80', lp: '0A8200M1' },
+        { op: 'CMD', in: 'R 00,I', say: 'IXC405D。SYSB は保守で停止中なので I。' },
+        { op: 'CMD', in: 'R #$HASP426#,WARM', say: 'スプールを残すので WARM。$HASP479 MEMBER=SYSA と $HASP454 が出る。' },
+        { op: 'LOG', find: '$HASP479' },
+        { op: 'DIAG', key: 'D1', cause: 'B', evidence: '$HASP479', say: 'ロックを持つのは、JES2 を止めずにリセットされた SYSA 自身。' },
+        { op: 'CMD', in: 'R #$HASP454#,Y', say: '$HASP406 LINKRPT WAS EXECUTING ON MEMBER SYSA が出る。' },
+        { op: 'CMD', in: '$S', say: 'LINKRPT が再実行される。' },
+        C('S VTAM'), C('S TCPIP'), C('S TSO'),
+        { op: 'WAIT', min: 125, say: 'LINKRPT が CC 0000 で終わり、利用者から問い合わせが来る。' },
+        { op: 'LOG', find: 'LINKRPT', say: '23 時前に始まり、IPL 後に $HASP406 の後でもう一度 $HASP373 で始まっている。' },
+        { op: 'DIAG', key: 'D2', cause: 'B', evidence: '$HASP406' },
+      ],
+      points: ['ハングは、待機状態とちがって PSW に原因が出ない。手順どおりリセットして IPL し、IPL 中に出る質問（IXC405D・$HASP454）に、状況から判断して答える。', 'システムが止まったときに実行中だったジョブは、ウォームスタートで再実行待ちに戻る（$HASP406）。利用者には「再実行された」と説明できるようにする。'],
+      mistakes: [['$HASP454 に N', 'JES2 が終了し、業務が始まらない（XS3 と同じ状態になる）。'], ['IXC405D に J', 'SYSB を活動中として扱い、後で SYSB の区分化処理が起きうる。'], ['COLD で JES2 を起動', '利用者の LINKRPT を含むスプールが消える。']],
+    },
+    {
+      id: 'C3', composite: true, link: true, title: '保守の日（停止・保守・パラメーター変更 IPL・再開）',
+      level: '上級', time: '40分', clock: '2026-11-05T17:00:00',
+      story: '17 時から SYSA を停止してハードウェア保守を行い、終わったら修正を反映したパラメーターで IPL して業務を再開します。利用者 USER01 は、保守の後に流したいジョブを保留付きで投入しておくと言っています。',
+      handoff: [
+        '利用者 USER01: 保守の後に流したい HOLDJOB を TYPRUN=HOLD で先に投入しておく。保守が終わったら解放してほしい。',
+        'バックアップ担当: 17 時のバックアップ BACKUP はあと 20 分ほどで終わる。取り消さず、終わるのを待つこと。',
+        'システムプログラマー: 保守後の IPL は IMSI を A（0A8200A1）にし、IEA101A に SYSP=01,CLPA を指定すること。',
+        '運用責任者: スプールは残す（WARM）。保守担当の連絡は、リセットした後に来る。',
+      ],
+      order: [
+        '利用者役で HOLDJOB を SUB する（保留のまま残る）。',
+        '標準の順序で停止する。BACKUP は取り消さずに終わるのを待つ。HALT EOD の後、HMC からシステムリセットする。',
+        '保守担当の連絡を受けて、指示どおりのパラメーターで IPL する。IPL 中に問題があれば原因を報告（D1）してから応答する。',
+        '業務を再開し、HOLDJOB を確認・解放する。利用者からの依頼と問い合わせに対応する（D2）。',
+      ],
+      prep: UPALL, prepSay: '17 時。SYSA 稼働中、USER01 は TSO にログオン中、バックアップ BACKUP が実行中。',
+      jobs: [{ name: 'BACKUP', remain: 20 }],
+      triggers: [
+        { after: 'reset', do: { scenario: 'DUPVOL', note: '保守担当: 作業が終わりました。来月から使う増設ディスク（装置 0B85）も接続しました。中身は WORK01 の複製です。IPL してください。' } },
+        { after: 'link-result:HOLDJOB', do: { note: '利用者 USER01: HOLDJOB は終わりました。念のため売上ファイルを使う LINKRPT も流して確認します（jcl-terminal で LINKRPT を SUB）。それと、HOLDJOB は本当に保守の後に流れたのか、SYSLOG で確かめてもらえますか？' } },
+      ],
+      diagnoses: [
+        { key: 'D1', title: 'IPL 中の IEA213A', question: 'IPL 中に IEA213A（WORK01 が 0A85 と 0B85 にある）が出た原因は？', answer: 'B', evidence: ['IEA213A'],
+          choices: [{ id: 'A', text: '本番の WORK01（0A85）が壊れた' }, { id: 'B', text: '保守で増設されたディスク 0B85 に WORK01 の複製があり、同じボリューム名が2台ある' }, { id: 'C', text: 'ロードアドレス（IPL 装置）の指定を間違えた' }, { id: 'D', text: 'SYSRES の複製がある' }] },
+        { key: 'D2', title: '利用者の問い合わせ: HOLDJOB はいつ流れたか', question: 'HOLDJOB が実行されたのはいつか？', answer: 'B', evidence: ['$HASP373'],
+          choices: [{ id: 'A', text: '投入した 17 時すぐ（保守の前）' }, { id: 'B', text: '保守後の IPL の後、$AJ で解放されてから（$HASP373 の時刻）' }, { id: 'C', text: '停止の途中（$P の後）' }, { id: 'D', text: 'まだ実行されていない' }] },
+      ],
+      checks: [].concat(
+        grp('停止', [
+          { item: 'BACKUP を取り消さず、RC=0000 で終わるのを待った', fn: (s, ev) => !has(ev, 'cancel', 'BACKUP') && ev.some(e => e.type === 'job-end' && e.detail === 'BACKUP RC=0000') },
+          { item: 'JES2 停止 → HALT EOD → システムリセットの順', fn: (s, ev) => { const e = ev.find(x => x.type === 'eod'); return !!e && e.jes === 'DOWN' && idx(ev, 'reset') > idx(ev, 'eod'); } },
+          { item: '停止の前に HOLDJOB を解放していない', fn: (s, ev) => { const a = idx(ev, 'jes-job', 'A HOLDJOB'); return a < 0 || a > idx(ev, 'reset'); } }]),
+        grp('保守後の IPL', [...D('D1', 'B', ['IEA213A'], '増設ディスクの WORK01 の複製'),
+          { item: 'IEA213A で増設側の 0B85 を OFFLINE にした', fn: (s, ev) => has(ev, 'dupvol', '0B85') && !has(ev, 'dupvol', '0A85') },
+          { item: 'SYSP=01 と CLPA を指定した', fn: (s, ev) => ev.some(e => e.type === 'sysparm' && /\b01\b/.test(e.detail) && /CLPA/.test(e.detail)) },
+          { item: 'スプールを残した（WARM）', fn: (s, ev) => { const r = idx(ev, 'reset'); return ev.slice(r).some(e => e.type === 'jes-start' && /^WARM/.test(e.detail)) && !has(ev, 'jes-start', 'COLD'); } }]),
+        grp('業務の再開', [
+          { item: '$DJ で確かめてから $AJ で HOLDJOB を解放し、CC 0000', fn: (s, ev) => { const d = idx(ev, 'jes-job', 'D HOLDJOB'), a = idx(ev, 'jes-job', 'A HOLDJOB'); return d >= 0 && a > d && s.linkResult('HOLDJOB') === 'CC 0000'; } },
+          { item: 'LINKRPT が CC 0000 で終わった', fn: s => s.linkResult('LINKRPT') === 'CC 0000' },
+          { item: '業務開始状態（JES2・VTAM・TCP/IP・TSO が稼働）', fn: s => allUp(s) },
+          ...D('D2', 'B', ['$HASP373'], '保守後に解放されてから')]),
+      ),
+      solution: [
+        { op: 'TERM', sub: 'HOLDJOB', say: '（利用者役）HOLDJOB を SUB。保留中なので始まらない。' },
+        ...SHUT.slice(0, 5),
+        { op: 'CMD', in: '$DA', say: 'BACKUP がまだ実行中。取り消さずに待つ。' },
+        { op: 'WAIT', min: 20, say: 'BACKUP が RC=0000 で終わり、$HASP099。' },
+        ...SHUT.slice(5),
+        { op: 'RESET', say: 'HMC からシステムリセット（保守）。保守担当から連絡が来る。' },
+        { op: 'LOAD', addr: '0A80', lp: '0A8200A1' },
+        { op: 'LOG', find: 'IEA213A', say: 'IEA213A DUPLICATE VOLUME WORK01 FOUND ON DEVICES 0A85 AND 0B85。保守担当の連絡と合わせて原因が分かる。' },
+        { op: 'DIAG', key: 'D1', cause: 'B', evidence: 'IEA213A' },
+        { op: 'CMD', in: 'R 00,0B85', say: '増設側の 0B85 を OFFLINE に。' },
+        { op: 'CMD', in: '', say: 'IEA347A は Enter。' },
+        { op: 'CMD', in: 'R 00,SYSP=01,CLPA' },
+        { op: 'CMD', in: 'R #$HASP426#,WARM' },
+        C('$S'), C('S VTAM'), C('S TCPIP'), C('S TSO'),
+        { op: 'CMD', in: "$DJ'HOLDJOB'", say: 'HOLDJOB が残っていて HOLD=(JOB)。' },
+        { op: 'CMD', in: "$AJ'HOLDJOB'", say: 'HOLDJOB が始まり RC=0000。利用者から連絡が来る。' },
+        { op: 'TERM', sub: 'LINKRPT', say: '（利用者役）LINKRPT を SUB → RC=0000。' },
+        { op: 'LOG', find: 'HOLDJOB', say: '$HASP373 HOLDJOB は IPL の後、$AJ の直後の時刻。' },
+        { op: 'DIAG', key: 'D2', cause: 'B', evidence: '$HASP373' },
+        C('D A,L'),
+      ],
+      points: ['保守の日は、停止 → 保守 → 起動の一連の作業の中で、指示の取り違え（パラメーター・取り消してよいジョブ）が起きやすい。連絡事項を確認しながら進める。', 'SYSLOG には時刻つきで $HASP373（開始）・$HASP395（終了）が残るので、「いつ流れたか」の問い合わせに答えられる。'],
+      mistakes: [['BACKUP を取り消して停止を急ぐ', 'バックアップ担当の指示に反する。翌日の復旧に影響する。'], ['IEA213A に 0A85', '本番の WORK01 が OFFLINE になる。'], ['COLD で JES2 を起動', 'HOLDJOB が消え、利用者は投入し直しになる。']],
+    },
+  );
+
   // シナリオを用意する（prep まで実行）。挑戦開始時点の時刻と操作履歴の位置を返す
   // Mock を渡すと、連携演習では模擬の jcl-terminal（link-mock.js）を相手にする（ページの模範解答とテスト用）。
   // シミュレータの挑戦モードでは Mock を渡さず、別タブの本物の jcl-terminal とつなぐ。
   function setup(Sim, x, Mock) {
     const s = new Sim({ scenarios: x.scenarios || [], triggers: x.triggers, jobs: x.jobs, linkDurations: x.linkDurations, clock: x.clock });
-    const term = x.link && Mock ? new Mock.MockTerm(s) : null;
-    const ctx = { sim: s, term };
+    const ctx = { sim: s, term: null };
     for (const st of x.prep || []) exec(ctx, st);
     // 前のシフトの出来事: SYSLOG にだけ残す（コンソールの表示はここで区切る）
     if (x.history) { for (const st of x.history) exec(ctx, st); ctx.historyEnd = s.out.length; ctx.historyLog = s.syslogLines(''); }
+    // 模擬の jcl-terminal は、準備が終わってからつなぐ（本物の jcl-terminal のタブも、挑戦を始めてからつながるのと同じ）
+    if (x.link && Mock) { ctx.term = new Mock.MockTerm(s); ctx.term.flush(); }
     ctx.start = new Date(s.clock.getTime()); ctx.evFrom = s.events.length;
     return ctx;
   }
@@ -538,7 +752,7 @@
     if (st.op === 'TERM') { if (term) term.submit(st.sub); return {}; }
     if (st.op === 'JOBIN') { s.addBatch(Object.assign({}, st.job)); return {}; }
     if (st.op === 'LOG') return { log: s.viewSyslog(st.find) };
-    if (st.op === 'DIAG') { s.reportDiagnosis(st.cause, st.evidence); return {}; }
+    if (st.op === 'DIAG') { s.reportDiagnosis(st.cause, st.evidence, st.key); return {}; }
     if (st.op === 'LOAD') s.hmcLoad(st.addr, st.lp);
     else if (st.op === 'RESET') s.hmcReset();
     else if (st.op === 'WAIT') s.advance(st.min);
@@ -552,7 +766,7 @@
   }
   function grade(x, ctx) {
     const ev = ctx.sim.events.slice(ctx.evFrom);
-    return x.checks.map(c => ({ item: c.item, ok: !!c.fn(ctx.sim, ev, ctx.start) }));
+    return x.checks.map(c => ({ item: c.item, ok: !!c.fn(ctx.sim, ev, ctx.start), group: c.group }));
   }
   // 模範解答を実行して、ステップごとの出力と採点を返す
   function runSolution(Sim, x, Mock) {
@@ -561,6 +775,18 @@
     return { sim: ctx.sim, steps, grade: grade(x, ctx), minutes: minutes(ctx.sim, ctx.start), historyLog: ctx.historyLog || [] };
   }
 
-  const api = { SCENARIOS: X, setup, grade, runSolution };
+  // 演習の診断の報告欄（単独の diagnosis も、複合演習の diagnoses も同じ形にそろえる）
+  const diagList = x => x.diagnoses || (x.diagnosis ? [Object.assign({ key: 'D', title: '' }, x.diagnosis)] : []);
+  // 採点を段階（group）ごとにまとめて HTML にする（シミュレータの採点タブと演習ページで共用）
+  function gradeHtml(g, esc) {
+    let h = '', cur;
+    for (const x of g) {
+      if (x.group && x.group !== cur) { cur = x.group; const gs = g.filter(y => y.group === cur); h += '<div class="grpttl" style="margin-top:8px;font-weight:600;font-size:13px">' + esc(cur) + '（' + gs.filter(y => y.ok).length + ' / ' + gs.length + '）</div>'; }
+      h += '<div class="chk ' + (x.ok ? 'ok' : 'ng') + '"><span class="m">' + (x.ok ? '✓' : '✗') + '</span><span>' + esc(x.item) + '</span></div>';
+    }
+    return h;
+  }
+
+  const api = { SCENARIOS: X, setup, grade, runSolution, diagList, gradeHtml };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.MvsExercises = api;
 })(typeof window !== 'undefined' ? window : globalThis);

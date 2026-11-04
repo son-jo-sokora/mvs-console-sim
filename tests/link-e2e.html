@@ -98,6 +98,8 @@ button { font-size: 14px; padding: 6px 14px; }
       else if (st.op === 'RESET') s.hmcReset();
       else if (st.op === 'WAIT') s.advance(st.min);
       else if (st.op === 'TERM') T.JclLink.submitMember(st.sub);
+      else if (st.op === 'LOG') s.viewSyslog(st.find);
+      else if (st.op === 'DIAG') s.reportDiagnosis(st.cause, st.evidence, st.key);
       else if (st.op === 'CMD') { const cmd = st.in.replace(/#([^#]+)#/g, (_, m) => { const p = s.pending().find(q => q.msgid === m); if (!p) { errs.push('応答待ちの ' + m + ' がない'); return '99'; } return p.id; }); s.command(cmd); }
       await settle();
     }

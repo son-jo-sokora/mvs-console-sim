@@ -96,8 +96,9 @@ table.mis th { background: var(--panel2); font-weight: 600; }
 (() => {
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   const nav = document.getElementById('nav'), list = document.getElementById('list');
-  let linkHead = false, logHead = false;
+  let linkHead = false, logHead = false, compHead = false;
   for (const x of MvsExercises.SCENARIOS) {
+    if (x.composite && !compHead) { compHead = true; nav.insertAdjacentHTML('beforeend', '<div style="color:var(--accent);font-weight:600;margin:12px 0 4px">複合演習</div>'); list.insertAdjacentHTML('beforeend', '<h2 style="font-size:17px;margin:28px 0 6px">複合演習（1つのシフトで、いくつもの事象に対応する）</h2><p class="small" style="margin:0 0 12px">これまでの演習の要素（SYSLOG の調査、jcl-terminal との連携、時刻で届く連絡、計画停止・IPL）を組み合わせた、長めの演習です。決まった時刻に連絡が来るので、それまでは「+5分」ボタンや WAIT n で時間を進めます。事象ごとに「調べる → 診断を報告 → 対応」を行い、採点も事象ごとに表示されます。jcl-terminal を連携モードで開いて使います。</p>'); }
     if (x.syslog && !logHead) { logHead = true; nav.insertAdjacentHTML('beforeend', '<div style="color:var(--accent);font-weight:600;margin:12px 0 4px">SYSLOG 調査演習</div>'); list.insertAdjacentHTML('beforeend', '<h2 style="font-size:17px;margin:28px 0 6px">SYSLOG 調査演習（記録から原因を推定する）</h2><p class="small" style="margin:0 0 12px">あなたは朝の交代でコンソールに着いたところです。夜のあいだの出来事は、シミュレータのコンソールの上にある「SYSLOG」タブで調べます。原因と根拠のメッセージを「診断の報告」に記入してから対応します。夜の出来事は、作り話ではなくシミュレータで実際に操作して作った記録です。</p>'); }
     if (x.link && !linkHead) { linkHead = true; nav.insertAdjacentHTML('beforeend', '<div style="color:var(--accent);font-weight:600;margin:12px 0 4px">連携演習（jcl-terminal と一緒に）</div>'); list.insertAdjacentHTML('beforeend', '<h2 style="font-size:17px;margin:28px 0 12px">連携演習（jcl-terminal と一緒に使う）</h2>'); }
     nav.insertAdjacentHTML('beforeend', '<a href="#' + x.id + '"><span class="no">' + x.id + '</span>' + esc(x.title) + '</a>');
@@ -109,8 +110,9 @@ table.mis th { background: var(--panel2); font-weight: 600; }
     h += '<div class="label">連絡事項</div><div class="box memo"><ul>' + x.handoff.map(m => '<li>' + esc(m) + '</li>').join('') + '</ul></div>';
     h += '<div class="label">作業指示書</div><div class="box order"><ol>' + x.order.map(m => '<li>' + esc(m) + '</li>').join('') + '</ol></div>';
     if (x.goal) h += '<div class="label">完了条件</div><div class="goal">' + esc(x.goal) + '</div>';
-    if (x.diagnosis) h += '<div class="label">診断の報告（' + esc(x.diagnosis.question) + '）</div><div class="box"><ul>' + x.diagnosis.choices.map(c => '<li><b>' + c.id + '</b> ' + esc(c.text) + '</li>').join('') + '</ul><p class="small" style="margin:4px 0">どれか1つを選び、根拠にしたメッセージ ID を書きます。</p></div>';
-    h += '<div class="label">採点項目</div><ul>' + x.checks.map(c => '<li>' + esc(c.item) + '</li>').join('') + '</ul>';
+    for (const d of MvsExercises.diagList(x)) h += '<div class="label">診断の報告' + (d.title ? ' ' + esc(d.key) + '（' + esc(d.title) + '）' : '') + ': ' + esc(d.question) + '</div><div class="box"><ul>' + d.choices.map(c => '<li><b>' + c.id + '</b> ' + esc(c.text) + '</li>').join('') + '</ul><p class="small" style="margin:4px 0">どれか1つを選び、根拠にしたメッセージ ID を書きます。</p></div>';
+    let gcur;
+    h += '<div class="label">採点項目</div><ul>' + x.checks.map(c => { let s = ''; if (c.group && c.group !== gcur) { gcur = c.group; s = '</ul><div style="font-weight:600;font-size:13px;margin-top:6px">' + esc(gcur) + '</div><ul>'; } return s + '<li>' + esc(c.item) + '</li>'; }).join('') + '</ul>';
     h += '<a class="btn" href="index.html?ex=' + x.id + (x.link ? '&link' : '') + '">シミュレータで挑戦する</a>' + (x.link ? ' <a class="btn" style="background:#2a3a1d;border-color:#4a6a2c" href="../jcl-terminal/?link" target="_blank" rel="noopener">jcl-terminal を開く ↗</a>' : '');
     h += '<details class="ans"><summary>解答と解説（挑戦してから開いてください）</summary>';
     h += '<div class="label">判断のポイント</div><ul>' + x.points.map(p => '<li>' + esc(p) + '</li>').join('') + '</ul>';
@@ -127,7 +129,7 @@ table.mis th { background: var(--panel2); font-weight: 600; }
       else if (st.op === 'RESET') h += '<div class="act"><span class="kind">HMC</span>システムリセット</div>';
       else if (st.op === 'NOTE') h += '<div class="act note">確認・判断</div>';
       else if (st.op === 'LOG') h += '<div class="act"><span class="kind">SYSLOG</span>「<code>' + esc(st.find) + '</code>」で検索</div>';
-      else if (st.op === 'DIAG') { const ch = x.diagnosis.choices.find(c => c.id === st.cause); h += '<div class="act"><span class="kind">診断の報告</span>原因 <code>' + esc(st.cause) + '</code>（' + esc(ch ? ch.text : '') + '）、根拠 <code>' + esc(st.evidence) + '</code></div>'; }
+      else if (st.op === 'DIAG') { const dd = MvsExercises.diagList(x).find(d => d.key === (st.key || 'D')); const ch = dd.choices.find(c => c.id === st.cause); h += '<div class="act"><span class="kind">診断の報告' + (st.key ? ' ' + esc(st.key) : '') + '</span>原因 <code>' + esc(st.cause) + '</code>（' + esc(ch ? ch.text : '') + '）、根拠 <code>' + esc(st.evidence) + '</code></div>'; }
       else if (st.op === 'TERM') h += '<div class="act"><span class="kind">jcl-terminal（利用者役）</span><code>' + esc(st.sub) + '</code> を開いて <code>SUB</code></div>';
       if (st.say) h += '<div>' + esc(st.say) + '</div>';
       if (s.log) h += '<details class="out" open><summary>SYSLOG の検索結果（' + s.log.length + ' 行）</summary><pre class="con" style="white-space:pre;overflow-x:auto">' + s.log.map(l => '<span class="info">' + esc(l) + '</span>').join('\n') + '</pre></details>';
@@ -136,7 +138,7 @@ table.mis th { background: var(--panel2); font-weight: 600; }
       h += '</li>';
     }
     h += '</ol>';
-    h += '<div class="label">模範解答の採点（所要 ' + r.minutes + ' 分）</div>' + r.grade.map(g => '<div class="chk ' + (g.ok ? '' : 'ng') + '"><span class="m">' + (g.ok ? '✓' : '✗') + '</span><span>' + esc(g.item) + '</span></div>').join('');
+    h += '<div class="label">模範解答の採点（所要 ' + r.minutes + ' 分）</div>' + MvsExercises.gradeHtml(r.grade, esc);
     h += '<div class="label">よくある誤りと、その結果</div><table class="mis"><tr><th>誤り</th><th>どうなるか</th></tr>' + x.mistakes.map(m => '<tr><td>' + esc(m[0]) + '</td><td>' + esc(m[1]) + '</td></tr>').join('') + '</table>';
     h += '</details></section>';
     list.insertAdjacentHTML('beforeend', h);

@@ -240,7 +240,7 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
       const g = MvsExercises.grade(exCtx.x, exCtx.ctx);
       const mins = Math.round((sim.clock - exCtx.ctx.start) / 60000);
       exHtml = '<h2>演習 ' + exCtx.x.id + ' の採点（' + g.filter(z => z.ok).length + ' / ' + g.length + '、経過 ' + mins + ' 分）</h2>' +
-        g.map(x => '<div class="chk ' + (x.ok ? 'ok' : 'ng') + '"><span class="m">' + (x.ok ? '✓' : '✗') + '</span><span>' + esc(x.item) + '</span></div>').join('') +
+        MvsExercises.gradeHtml(g, esc) +
         '<p class="small"><a href="scenarios.html#' + exCtx.x.id + '" target="_blank" style="color:var(--accent)">解答と解説を見る</a></p><hr style="border-color:var(--line)">';
     }
     const r = sim.evaluate(exCtx ? exCtx.ctx.evFrom : 0);
@@ -329,18 +329,22 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
       '<h2>連絡事項</h2><ul class="small">' + li(x.handoff) + '</ul>' +
       '<h2>作業指示書</h2><ol>' + li(x.order) + '</ol>' +
       (x.goal ? '<h2>完了条件</h2><p class="small">' + esc(x.goal) + '</p>' : '') +
-      (x.diagnosis ? '<h2>診断の報告</h2><div class="diag"><p class="small">' + esc(x.diagnosis.question) + '</p>' +
-        x.diagnosis.choices.map(c => '<label><input type="radio" name="dg" value="' + c.id + '"><span><b>' + c.id + '</b> ' + esc(c.text) + '</span></label>').join('') +
-        '<label class="small" style="display:block;margin-top:6px">根拠のメッセージ ID（SYSLOG で見つけたもの。例: IEE301I）</label><input type="text" id="dgEv" autocomplete="off">' +
-        '<div class="row"><button class="primary" id="dgGo">報告する</button></div><p class="small" id="dgMsg"></p></div>' : '') +
+      MvsExercises.diagList(x).map(d => '<h2>診断の報告' + (d.title ? '（' + esc(d.title) + '）' : '') + '</h2><div class="diag" data-key="' + d.key + '"><p class="small">' + esc(d.question) + '</p>' +
+        d.choices.map(c => '<label><input type="radio" name="dg_' + d.key + '" value="' + c.id + '"><span><b>' + c.id + '</b> ' + esc(c.text) + '</span></label>').join('') +
+        '<label class="small" style="display:block;margin-top:6px">根拠のメッセージ ID（SYSLOG で見つけたもの。例: IEE301I）</label><input type="text" class="dgEv" autocomplete="off">' +
+        '<div class="row"><button class="primary dgGo">報告する</button></div><p class="small dgMsg"></p></div>').join('') +
       (x.link ? '<p class="small" style="color:var(--warn)">この演習は jcl-terminal と一緒に使います。画面上の「jcl-terminal を開く」で別タブに開き、「利用者役」の操作（SUB）はそちらで行ってください。</p>' : '') +
       '<p class="small">途中で「（連絡）」が届くことがあります。ロードパラメーターは自分で入力してください。</p><hr style="border-color:var(--line)">';
-    if (x.diagnosis) $('dgGo').onclick = () => {
-      const c = (document.querySelector('input[name=dg]:checked') || {}).value, ev = $('dgEv').value.trim().toUpperCase();
-      if (!c) { $('dgMsg').textContent = '原因を1つ選んでください。'; return; }
-      sim.reportDiagnosis(c, ev);
-      $('dgMsg').textContent = '報告しました（原因 ' + c + (ev ? '、根拠 ' + ev : '、根拠の記入なし') + '）。報告は何度でも出し直せます（最後の報告を採点）。結果は「採点」タブで。';
-    };
+    document.querySelectorAll('#procGuide .diag').forEach(box => {
+      const key = box.dataset.key;
+      box.querySelector('.dgGo').onclick = () => {
+        const c = (box.querySelector('input[name=dg_' + key + ']:checked') || {}).value, ev = box.querySelector('.dgEv').value.trim().toUpperCase();
+        const msg = box.querySelector('.dgMsg');
+        if (!c) { msg.textContent = '原因を1つ選んでください。'; return; }
+        sim.reportDiagnosis(c, ev, key);
+        msg.textContent = '報告しました（原因 ' + c + (ev ? '、根拠 ' + ev : '、根拠の記入なし') + '）。報告は何度でも出し直せます（最後の報告を採点）。結果は「採点」タブで。';
+      };
+    });
     switchTab('tProc');
     refresh();
     return true;

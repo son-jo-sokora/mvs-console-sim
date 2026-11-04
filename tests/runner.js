@@ -73,7 +73,8 @@
     if (wrong) {
       sol = sol.slice();
       for (const [key, rep] of wrong.mutate) {
-        const k = sol.findIndex(st => (st.op === 'CMD' ? st.in : st.op) === key);
+        // 手順の指定: コマンドはその文字列、WAIT は 'WAIT:分'、ほかは op（DIAG・LOG など）。最初に一致した手順を書き換える
+        const k = sol.findIndex(st => (st.op === 'CMD' ? st.in : st.op === 'WAIT' ? 'WAIT:' + st.min : st.op) === key);
         if (k < 0) return { id: wrong.id, title: wrong.title, kind: '演習の採点', ok: false, errs: [`書き換え対象 "${key}" が模範解答にない`], text: [] };
         sol.splice(k, 1, ...rep);
       }

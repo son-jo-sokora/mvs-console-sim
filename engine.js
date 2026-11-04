@@ -97,6 +97,7 @@
       this.nipQueue = null;
       this.continuing = false;
       this.dupvolResolved = false;
+      this.hung = false;         // システムが応答しない（演習の出来事）。HMC のシステムリセットで解ける
     }
 
     // ---- 出力 -----------------------------------------------------------
@@ -136,14 +137,16 @@
     }
     // SYSLOG を見た（採点で「調べてから対応したか」を見る）
     viewSyslog(filter) { this._log('syslog-view', filter || ''); return this.syslogLines(filter); }
-    // 診断の報告（原因の選択肢 ID と、根拠のメッセージ）
-    reportDiagnosis(cause, evidence) { this._log('diag', String(cause) + '|' + String(evidence || '').toUpperCase()); }
-    // バッチジョブの投入（演習の「前のシフト」用）。q: {name, remain, dsns, end, lines}
-    addBatch(q) {
+    // 診断の報告（key: どの事象についての報告か。1つの演習に複数の事象がある複合演習で使う）
+    reportDiagnosis(cause, evidence, key) { this._log('diag', (key || 'D') + '|' + String(cause) + '|' + String(evidence || '').toUpperCase()); }
+    // バッチジョブの投入（演習の「前のシフト」や、途中で起きる出来事）。q: {name, remain, dsns, end, lines}
+    addBatch(q) { this._submitBatch(q); this._afterOp(); }
+    _submitBatch(q) {
+      if (q.remain === undefined) q.remain = Infinity;
       this.emit('$HASP100 ' + q.name.padEnd(8) + ' ON INTRDR' + ' '.repeat(12) + 'BATCH'.padEnd(20) + ' FROM ' + (q.from || 'STC00000 SCHEDULR'));
       (this._batchQueued = this._batchQueued || []).push(q);
       this._log('batch-submit', q.name);
-      this._initiate(); this._afterOp();
+      this._initiate();
     }
     note(text) { this.emit(text, 'sim', null); }
     hmc(text) { this.emit(text, 'hmc', null); }
@@ -153,24 +156,33 @@
     }
 
     // ---- 途中で起きる出来事（演習シナリオ用） ----------------------------
-    // opts.triggers: [{ after: 'eod' | 'reset' | 'wait:05F' | 'started:TSO' ..., do: { note, scenario, job } }]
-    // after は操作履歴の種類（_log の type）か「種類:詳細の先頭」。一致したら1回だけ実行する。
+    // opts.triggers: [{ after: 'eod' | 'reset' | 'wait:05F' | 'started:TSO' ..., do: {...} }]
+    //   after は操作履歴の種類（_log の type）か「種類:詳細の先頭」。一致したら1回だけ実行する。
+    // または { at: '2026-11-05T10:00', do: {...} }: シミュレータの時計がその時刻になったら1回だけ実行する。
+    // do: { note: 連絡の文, scenario: 障害シナリオを足す, job: バッチジョブを投入, hang: true（システムが応答しなくなる） }
     _fireTriggers(type, detail) {
       for (const t of this.triggers) {
-        if (t.fired) continue;
+        if (t.fired || !t.after) continue;
         const [ty, de] = t.after.split(':');
         if (ty !== type || (de !== undefined && !String(detail || '').startsWith(de))) continue;
-        t.fired = true;
-        const d = t.do || {};
-        if (d.scenario) [].concat(d.scenario).forEach(k => { this.sc.add(k); if (k === 'CKPTLOCK') this.ckptLockHeld = true; if (k === 'RESIDUAL') this.residual = true; });
-        if (d.note) this.emit('（連絡）' + d.note, 'sim');
-        if (d.job) [].concat(d.job).forEach(q => {
-          if (this.jes === 'UP' && this.inits && !this.jesDrain) { const j = this._addJob(q.name, 'JOB', q.remain === undefined ? Infinity : q.remain, q.cancelable); this.emit('$HASP373 ' + j.name.padEnd(8) + ' STARTED - INIT 1    - CLASS A        - SYS ' + SYSNAME); }
-          else (this._batchQueued = this._batchQueued || []).push(q);
-        });
+        this._doTrigger(t);
       }
     }
-    tick(sec) { this.clock = new Date(this.clock.getTime() + sec * 1000); }
+    _fireTimed() {
+      for (const t of this.triggers) if (!t.fired && t.at && this.clock.getTime() >= new Date(t.at + 'Z').getTime()) this._doTrigger(t);
+    }
+    _doTrigger(t) {
+      t.fired = true;
+      const d = t.do || {};
+      if (d.scenario) [].concat(d.scenario).forEach(k => { this.sc.add(k); if (k === 'CKPTLOCK') this.ckptLockHeld = true; if (k === 'RESIDUAL') this.residual = true; });
+      if (d.note) this.emit('（連絡）' + d.note, 'sim');
+      if (d.job) [].concat(d.job).forEach(q => this._submitBatch(Object.assign({}, q)));
+      if (d.hang && this.phase === 'UP') { this.hung = true; this._log('hang'); }
+    }
+    tick(sec) {
+      this.clock = new Date(this.clock.getTime() + sec * 1000);
+      if (this.triggers.some(t => t.at && !t.fired)) this._fireTimed();
+    }
 
     // ---- WTOR ---------------------------------------------------------
     wtor(msgid, text, fn, opts) {
@@ -511,6 +523,7 @@
       const text = (raw || '').trim();
       if (this.phase === 'OFF') { this.note('（シミュレータ注記）システムは起動していません。HMC から LOAD してください'); return; }
       if (this.phase === 'WAIT' || this.phase === 'PARTITIONED') { this.note('（シミュレータ注記）システムは無効待機状態です。コマンドは受け付けられません。HMC からシステムリセット／再 LOAD してください'); return; }
+      if (this.hung && !/^\s*WAIT\b/i.test(text)) { this._log('cmd-hung', text); this.note('（シミュレータ注記）コンソールが応答しません（入力した文字も表示されない）。システムが応答していない状態です'); return; }
       this.emit(text === '' ? '(ENTER)' : text, 'cmd');
       this._log('cmd', text);
       // NIP 中: 空 Enter は保留中の応答 00 への空応答
@@ -549,6 +562,7 @@
     _advance(min) {
       for (let i = 0; i < min; i++) {
         this.tick(60);
+        if (this.hung) continue;   // 応答しない間は、ジョブも進まない
         for (const j of this.jobs.slice()) {
           if (j.type !== 'JOB' || j.enqWait || j.remain === Infinity) continue;
           if (j.linked) {
@@ -917,8 +931,9 @@
     _send(m) { if (this.linkOut) { try { this.linkOut(m); } catch (e) { /* 相手がいなくても動作は続ける */ } } }
     _sync() {
       const tsu = this.jobs.find(j => j.type === 'TSU' && j.linked);
-      const s = { t: 'state', sys: SYSNAME, phase: this.phase, jes: this.jes, drain: this.jesDrain,
-        tso: this.phase === 'UP' && this.jobs.some(j => j.name === 'TSO'), logon: this.phase === 'UP' && !!tsu, tsu: tsu ? tsu.jobid : null };
+      const ok = this.phase === 'UP' && !this.hung;
+      const s = { t: 'state', sys: SYSNAME, phase: this.hung ? 'HUNG' : this.phase, jes: this.jes, drain: this.jesDrain,
+        tso: ok && this.jobs.some(j => j.name === 'TSO'), logon: ok && !!tsu, tsu: tsu ? tsu.jobid : null };
       const k = JSON.stringify(s);
       if (k !== this._lastState) { this._lastState = k; this._send(s); }
     }
