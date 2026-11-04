@@ -46,7 +46,7 @@ $HASP492 JES2 ALL-MEMBER WARM START HAS COMPLETED
 8. [改造してみる](#8-改造してみる)
 9. [ライセンスと商標](#9-ライセンスと商標)
 
-対応しているエラーの一覧は [docs/error-catalog.md](docs/error-catalog.md)、マニュアルから洗い出したエラー候補の全件は [docs/error-candidates.md](docs/error-candidates.md)、設計上の判断は [docs/decisions.md](docs/decisions.md) にあります。
+**できること・できないことの一覧表は [docs/capabilities.md](docs/capabilities.md) にあります。** 対応しているエラーの一覧は [docs/error-catalog.md](docs/error-catalog.md)、マニュアルから洗い出したエラー候補の全件は [docs/error-candidates.md](docs/error-candidates.md)、設計上の判断は [docs/decisions.md](docs/decisions.md) にあります。
 
 ---
 
@@ -217,6 +217,8 @@ jcl-terminal には、連携演習用のサンプル `LINKRPT`（データセッ
 ---
 
 ## 6. できること・できないこと
+
+細かい一覧表は [docs/capabilities.md](docs/capabilities.md) にあります。ここでは概要だけを示します。
 
 **IPL**
 HMC からの LOAD（ロードアドレス・ロードパラメーターの検査）、LOADxx・IODF の選択、IMSI によるメッセージ表示とプロンプトの切り替え、マスターカタログ（IEA347A）、システムパラメーター（IEA101A、SYSP=、CONT、OPI=NO）、装置の問題（IEA311I・IEA120D・IEA213A・IEA214A）、時刻の確認（IEA888A）、sysplex への参加（IXC404I・IXC405D）、IPL 中の待機状態（00F・0B3・088・0B1・05F）
