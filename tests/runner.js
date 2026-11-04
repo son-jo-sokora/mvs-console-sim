@@ -56,6 +56,29 @@
     return { id: p.id, title: p.title, kind: '手順例', ok: !errs.length, errs, text: s.out.map(o => o.text), sim: s };
   }
 
+  // 演習シナリオ: 模範解答は全項目 OK、誤答は fail に挙げた項目だけが ✗
+  function runExercise(Sim, E, x, wrong) {
+    let sol = x.solution;
+    if (wrong) {
+      sol = sol.slice();
+      for (const [key, rep] of wrong.mutate) {
+        const k = sol.findIndex(st => (st.op === 'CMD' ? st.in : st.op) === key);
+        if (k < 0) return { id: wrong.id, title: wrong.title, kind: '演習の採点', ok: false, errs: [`書き換え対象 "${key}" が模範解答にない`], text: [] };
+        sol.splice(k, 1, ...rep);
+      }
+    }
+    const r = E.runSolution(Sim, Object.assign({}, x, { solution: sol }));
+    const errs = [];
+    // 誤答では途中から手順が進めなくなるのは想定内なので、応答待ちの不一致は模範解答だけで確認する
+    if (!wrong) r.steps.forEach((s, i) => s.errs.forEach(m => errs.push(`手順 ${i + 1}: 応答待ちの ${m} がない`)));
+    for (const g of r.grade) {
+      const shouldFail = wrong ? wrong.fail.some(f => g.item.includes(f)) : false;
+      if (g.ok === shouldFail) errs.push(`採点「${g.item}」が ${g.ok ? '✓' : '✗'}（期待 ${shouldFail ? '✗' : '✓'}）`);
+    }
+    if (wrong) wrong.fail.forEach(f => { if (!r.grade.some(g => g.item.includes(f))) errs.push(`採点項目 "${f}" がない`); });
+    return { id: wrong ? wrong.id : x.id, title: wrong ? x.id + ' 誤答: ' + wrong.title : x.title + '（模範解答）', kind: wrong ? '演習の採点' : '演習', ok: !errs.length, errs, text: r.sim.out.map(o => o.text), sim: r.sim };
+  }
+
   function runAll(o) {
     const only = o.only || [];
     const results = [];
@@ -69,6 +92,13 @@
       if (only.length && !only.includes(p.id)) continue;
       const r = runProc(o.Sim, o.Procs, p); results.push(r);
       r.sim.out.forEach(x => x.msgid && seenIds.add(x.msgid));
+    }
+    if (o.Ex) {
+      for (const x of o.Ex.SCENARIOS) {
+        if (!only.length || only.includes(x.id)) results.push(runExercise(o.Sim, o.Ex, x));
+        for (const w of (o.exCases || []).filter(w => w.ex === x.id)) if (!only.length || only.includes(w.id) || only.includes(x.id)) results.push(runExercise(o.Sim, o.Ex, x, w));
+      }
+      results.forEach(r => r.sim && r.sim.out.forEach(x => x.msgid && seenIds.add(x.msgid)));
     }
     let coverage = null;
     if (!only.length && o.engineSrc) {

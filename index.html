@@ -65,7 +65,8 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
   <span class="pill" id="pJes">JES2: -</span>
   <span class="pill" id="pVtam">VTAM: -</span>
   <span class="pill" id="pTime">-</span>
-  <a href="procedures.html" style="color:var(--accent);font-size:13px;margin-left:auto">手順例を見る →</a>
+  <a href="procedures.html" style="color:var(--accent);font-size:13px;margin-left:auto">手順例</a>
+  <a href="scenarios.html" style="color:var(--accent);font-size:13px">演習シナリオ</a>
 </header>
 <main>
   <section class="card" id="left">
@@ -148,6 +149,7 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
 <script src="msgref.js"></script>
 <script src="engine.js"></script>
 <script src="procedures.js"></script>
+<script src="scenarios.js"></script>
 <script>
 (() => {
   const $ = id => document.getElementById(id);
@@ -202,7 +204,9 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
   }
   $('psw').onclick = () => { if (sim && sim.wait) showRef(sim.wait.code, true); };
 
+  let exCtx = null; // 演習シナリオの挑戦中なら {x, ctx}
   function fresh(scs) {
+    exCtx = null; $('procGuide').innerHTML = '';
     sim = new MvsSim({ scenarios: scs });
     $('console').innerHTML = '';
     sim.on(addLine);
@@ -211,8 +215,16 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
     refresh();
   }
   function score() {
+    let exHtml = '';
+    if (exCtx) {
+      const g = MvsExercises.grade(exCtx.x, exCtx.ctx);
+      const mins = Math.round((sim.clock - exCtx.ctx.start) / 60000);
+      exHtml = '<h2>演習 ' + exCtx.x.id + ' の採点（' + g.filter(z => z.ok).length + ' / ' + g.length + '、経過 ' + mins + ' 分）</h2>' +
+        g.map(x => '<div class="chk ' + (x.ok ? 'ok' : 'ng') + '"><span class="m">' + (x.ok ? '✓' : '✗') + '</span><span>' + esc(x.item) + '</span></div>').join('') +
+        '<p class="small"><a href="scenarios.html#' + exCtx.x.id + '" target="_blank" style="color:var(--accent)">解答と解説を見る</a></p><hr style="border-color:var(--line)">';
+    }
     const r = sim.evaluate();
-    $('score').innerHTML = '<h2>操作の採点</h2>' + r.map(x => '<div class="chk ' + (x.ok ? 'ok' : 'ng') + '"><span class="m">' + (x.ok ? '✓' : '✗') + '</span><span>' + esc(x.item) + '</span></div>').join('') +
+    $('score').innerHTML = exHtml + '<h2>操作の採点</h2>' + r.map(x => '<div class="chk ' + (x.ok ? 'ok' : 'ng') + '"><span class="m">' + (x.ok ? '✓' : '✗') + '</span><span>' + esc(x.item) + '</span></div>').join('') +
       '<p class="small">停止手順の項目は $P JES2 または Z EOD を入力すると表示されます。</p>' +
       (sim.hidden ? '<details><summary class="small">仕込まれた障害（答え）</summary><ul class="small">' + sim.hidden.map(k => '<li>' + esc(MvsSim.SCENARIOS[k].label) + '</li>').join('') + '</ul></details>' : '');
   }
@@ -224,6 +236,7 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
     const keys = Object.keys(MvsSim.SCENARIOS);
     const s = new Set(), n = 1 + Math.floor(Math.random() * 3);
     while (s.size < n) s.add(keys[Math.floor(Math.random() * keys.length)]);
+    exCtx = null; $('procGuide').innerHTML = '';
     sim = new MvsSim({ scenarios: [...s] }); sim.hidden = [...s];
     $('console').innerHTML = ''; sim.on(addLine);
     addLine({ time: sim.ts(), text: '（シミュレータ）ランダムな障害を ' + n + ' 個仕込みました（内容は「採点」タブで確認できます）。HMC から LOAD してください。', cls: 'sim' });
@@ -270,8 +283,33 @@ code { font-family: var(--mono); background: #0c1014; padding: 0 4px; border-rad
     refresh();
     return true;
   }
-  const q = new URLSearchParams(location.search).get('proc');
-  if (!(q && startProc(q))) fresh([]);
+  // 演習シナリオの挑戦（index.html?ex=X1）。答えは出さず、状況・連絡事項・作業指示書だけを表示する
+  function startEx(id) {
+    const x = (window.MvsExercises ? MvsExercises.SCENARIOS : []).find(e => e.id === id);
+    if (!x) return false;
+    scnBox.querySelectorAll('input').forEach(i => i.checked = false);
+    const ctx = MvsExercises.setup(MvsSim, x);
+    sim = ctx.sim; exCtx = { x, ctx };
+    $('console').innerHTML = '';
+    addLine({ time: '', text: '（シミュレータ）演習 ' + x.id + '「' + x.title + '」を開始します。' + (x.prepSay ? '開始時の状態: ' + x.prepSay : 'システムは停止しています。'), cls: 'sim' });
+    sim.out.forEach(addLine);
+    sim.on(addLine);
+    addLine({ time: sim.ts(), text: '（シミュレータ）ここから挑戦してください。作業指示書は右の「手順書」タブ、終わったら「採点」タブで確認します。', cls: 'sim' });
+    $('addr').value = '0A80'; $('lp').value = '';
+    const li = a => a.map(m => '<li>' + esc(m) + '</li>').join('');
+    $('procGuide').innerHTML = '<h2>演習 ' + x.id + '：' + esc(x.title) + '</h2>' +
+      '<p class="small">難易度 ' + esc(x.level) + ' ／ 目安 ' + esc(x.time) + '</p>' +
+      '<p>' + esc(x.story) + '</p>' +
+      '<h2>連絡事項</h2><ul class="small">' + li(x.handoff) + '</ul>' +
+      '<h2>作業指示書</h2><ol>' + li(x.order) + '</ol>' +
+      '<h2>完了条件</h2><p class="small">' + esc(x.goal) + '</p>' +
+      '<p class="small">途中で「（連絡）」が届くことがあります。ロードパラメーターは自分で入力してください。</p><hr style="border-color:var(--line)">';
+    switchTab('tProc');
+    refresh();
+    return true;
+  }
+  const qs = new URLSearchParams(location.search);
+  if (!((qs.get('ex') && startEx(qs.get('ex'))) || (qs.get('proc') && startProc(qs.get('proc'))))) fresh([]);
 })();
 </script>
 </body>

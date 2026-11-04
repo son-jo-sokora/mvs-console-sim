@@ -9,11 +9,13 @@ const { results, coverage } = runAll({
   Ref: require(path.join(root, 'msgref.js')),
   Procs: require(path.join(root, 'procedures.js')),
   cases: require('./cases.js'),
+  Ex: require(path.join(root, 'scenarios.js')),
+  exCases: require('./exercise-cases.js'),
   engineSrc: fs.readFileSync(path.join(root, 'engine.js'), 'utf8'),
   only,
 });
 for (const r of results) {
-  console.log(`${r.ok ? '✓' : '✗'} ${r.kind === '手順例' ? '手順例 ' : ''}${r.id} ${r.title}`);
+  console.log(`${r.ok ? '✓' : '✗'} ${r.kind === 'エラー' ? '' : r.kind + ' '}${r.id} ${r.title}`);
   r.errs.forEach(e => console.log('    - ' + e));
   if (process.env.VERBOSE) r.text.forEach(t => console.log('      | ' + t.replace(/\n/g, '\n      | ')));
 }

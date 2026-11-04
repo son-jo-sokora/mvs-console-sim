@@ -62,6 +62,8 @@
       this.listeners = [];
       this.out = [];
       this.events = [];       // 操作履歴（採点用）
+      this.triggers = (opts.triggers || []).map(t => Object.assign({}, t, { fired: false }));
+      this.initialJobs = opts.jobs || null; // 演習シナリオで、最初の JES2 起動時にスプールにあるジョブ
       this.clock = new Date(Date.UTC(2026, 10, 5, 6, 0, 0)); // 2026-11-05 06:00
       this._resetMachine();
       // 前回の運転状態（シナリオで変わる）
@@ -105,7 +107,29 @@
     }
     note(text) { this.emit(text, 'sim', null); }
     hmc(text) { this.emit(text, 'hmc', null); }
-    _log(type, detail) { this.events.push({ type, detail, phase: this.phase, jes: this.jes, vtam: this.vtam, time: this.ts() }); }
+    _log(type, detail) {
+      this.events.push({ type, detail, phase: this.phase, jes: this.jes, vtam: this.vtam, time: this.ts() });
+      this._fireTriggers(type, detail);
+    }
+
+    // ---- 途中で起きる出来事（演習シナリオ用） ----------------------------
+    // opts.triggers: [{ after: 'eod' | 'reset' | 'wait:05F' | 'started:TSO' ..., do: { note, scenario, job } }]
+    // after は操作履歴の種類（_log の type）か「種類:詳細の先頭」。一致したら1回だけ実行する。
+    _fireTriggers(type, detail) {
+      for (const t of this.triggers) {
+        if (t.fired) continue;
+        const [ty, de] = t.after.split(':');
+        if (ty !== type || (de !== undefined && !String(detail || '').startsWith(de))) continue;
+        t.fired = true;
+        const d = t.do || {};
+        if (d.scenario) [].concat(d.scenario).forEach(k => { this.sc.add(k); if (k === 'CKPTLOCK') this.ckptLockHeld = true; if (k === 'RESIDUAL') this.residual = true; });
+        if (d.note) this.emit('（連絡）' + d.note, 'sim');
+        if (d.job) [].concat(d.job).forEach(q => {
+          if (this.jes === 'UP' && this.inits && !this.jesDrain) { const j = this._addJob(q.name, 'JOB', q.remain === undefined ? Infinity : q.remain, q.cancelable); this.emit('$HASP373 ' + j.name.padEnd(8) + ' STARTED - INIT 1    - CLASS A        - SYS ' + SYSNAME); }
+          else (this._batchQueued = this._batchQueued || []).push(q);
+        });
+      }
+    }
     tick(sec) { this.clock = new Date(this.clock.getTime() + sec * 1000); }
 
     // ---- WTOR ---------------------------------------------------------
@@ -482,6 +506,7 @@
         if (this.jes === 'UP') this._initiate();
       }
       this.note('（シミュレータ）' + min + '分経過');
+      this._log('advance', String(min));
     }
 
     _dispT() {
@@ -691,8 +716,10 @@
       this.emit('$HASP492 JES2 ' + (mode === 'COLD' ? 'COLD START' : 'ALL-MEMBER WARM START') + ' HAS COMPLETED');
       this.jesMode = mode;
       this.inits = true;
-      if (this.sc.has('BATCH') || this.sc.has('DUPJOB') || this.sc.has('HUNG')) {
-        this._batchQueued = [];
+      // スプール上のジョブは最初の JES2 起動時だけ投入する（停止で片付けたジョブが再 IPL で復活しないように）
+      if (!this._initialJobsDone && (this.initialJobs || this.sc.has('BATCH') || this.sc.has('DUPJOB') || this.sc.has('HUNG'))) {
+        this._initialJobsDone = true;
+        this._batchQueued = (this._batchQueued || []).concat(this.initialJobs || []);
         if (this.sc.has('BATCH')) this._batchQueued.push({ name: 'PAYROLL', remain: 15 });
         if (this.sc.has('DUPJOB')) { this._batchQueued.push({ name: 'BKUP', remain: 30 }); this._batchQueued.push({ name: 'BKUP', remain: 30 }); }
         if (this.sc.has('HUNG')) this._batchQueued.push({ name: 'HUNGJOB', remain: Infinity, cancelable: false });
