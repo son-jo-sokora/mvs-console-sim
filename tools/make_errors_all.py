@@ -20,12 +20,13 @@ L = ["# マニュアルから抽出した IPL / シャットダウン関連エ�
      "抽出条件: 初期化（IPL/NIP）中に出る応答要求（A/D）・待機（W）メッセージ、再指定や再IPLを求めるエラー、XCF の初期化／停止時の応答要求、",
      "JES2 の初期化・終了モジュールが出す応答要求／終了メッセージ、操作コマンドが拒否されるメッセージ、IPL/NIP に関係する待機状態コード。",
      "機械抽出のため、一部に情報メッセージ（エラーでないもの）も混じります。",
-     "", "凡例: ✓＝シミュレータで再現（tests でテスト）、△＝解説のみ（シミュレータ内の注記・解説パネル）、空欄＝未対応", ""]
+     "", "凡例: ✓＝シミュレータで再現（tests でテスト）、△＝解説のみ（シミュレータ内の注記・解説パネル）、空欄＝未対応", "",
+     "メッセージの文面と説明は IBM のマニュアルの文章なので、この一覧には写していません。「出典」のページ（PDF のページ番号）で本文を確認してください。", ""]
 total = 0; impl = 0
 for title, f in groups:
     rows = [o for o in data if f(o)]
     if not rows: continue
-    L += ["## " + title + f"（{len(rows)} 件）", "", "| 対応 | ID | 内容（先頭） | 出典 |", "|---|---|---|---|"]
+    L += ["## " + title + f"（{len(rows)} 件）", "", "| 対応 | ID | 抽出した理由 | 出典 |", "|---|---|---|---|"]
     for o in rows:
         total += 1
         if o["kind"] == "wait":
@@ -33,10 +34,9 @@ for title, f in groups:
         else:
             mark = "✓" if o["id"] in used else ("△" if o["id"] in noted else "")
         impl += mark == "✓"
-        txt = o["text"].replace("|", "/").replace("\n", " ")
-        txt = re.sub(r"\d+ z/OS: z/OS [^=]*=== PAGE \d+ ===", "", txt)
-        txt = re.sub(r"Chapter \d+\.[^=]*=== PAGE \d+ ===", "", txt).strip()
-        L.append(f"| {mark} | `{o['id']}` | {txt[:90]} | {o['book']} p.{o['page']} |")
+        # マニュアルの文面・説明は IBM の著作物なので載せない。抽出の条件（このプロジェクトの言葉）と出典ページだけ
+        why = o["why"].replace("|", "/")
+        L.append(f"| {mark} | `{o['id']}` | {why} | {o['book']} p.{o['page']} |")
     L.append("")
 L.insert(8, f"**合計 {total} 件**（うちシミュレータで再現 {impl} 件）。シミュレータで扱うエラーの詳細とテスト対応は [error-catalog.md](error-catalog.md) を参照。")
 L.insert(9, "")
